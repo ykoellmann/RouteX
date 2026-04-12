@@ -92,6 +92,7 @@ class SonarwhalePanel(private val project: Project) : JPanel(BorderLayout()) {
             if (request != null) {
                 endpointTree.selectRequest(endpointId, requestId)
                 detailPanel.showRequest(endpoint, request)
+                detailPanel.requestPanel.triggerSend()
             } else {
                 endpointTree.selectEndpoint(endpointId)
                 detailPanel.showEndpoint(endpoint)

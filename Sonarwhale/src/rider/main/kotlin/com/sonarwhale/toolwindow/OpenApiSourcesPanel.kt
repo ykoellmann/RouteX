@@ -102,7 +102,9 @@ class OpenApiSourcesPanel(
 
         if (envs.isNotEmpty()) {
             selectedIdx = 0
+            suppressListener = true
             envList.selectedIndex = 0
+            suppressListener = false
             loadEnv()
         }
 

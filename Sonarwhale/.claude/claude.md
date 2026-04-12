@@ -386,8 +386,8 @@ PsiManager.getInstance(project).addPsiTreeChangeListener(listener, disposable)
 
 - [x] File-Save Trigger via `BulkFileListener` (JSON/YAML), debounced 500ms — bereits in RouteIndexService
 - [x] Manueller Refresh-Button und Re-Scan im Tool Window
-- [ ] Build-Event Trigger (MessageBus / CompileContext)
-- [ ] 1-Minuten-Intervall (Alarm/Coroutine-Loop)
+- [x] Build-Event Trigger (MessageBus / CompileContext)
+- [x] 1-Minuten-Intervall (Alarm/Coroutine-Loop)
 
 ### Phase 3 — Diff & Snapshots
 

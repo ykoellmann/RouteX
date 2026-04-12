@@ -279,7 +279,12 @@ class SonarwhaleGutterService(private val project: Project) : Disposable {
                                 ?.let { methods += it }
                         }
                     }
-                    reStringLiteral.findAll(text).forEach { rawLiterals += it.groupValues[1] }
+                    reStringLiteral.findAll(text).forEach { m ->
+                        // Skip named parameter values (e.g. Name = "routeName") — only positional
+                        // string args are route templates.
+                        val before = text.substring(0, m.range.first).trimEnd()
+                        if (!before.endsWith("=")) rawLiterals += m.groupValues[1]
+                    }
                 }
                 else -> {
                     declLine = i

@@ -9,6 +9,7 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.util.Alarm
 import com.sonarwhale.model.ApiEndpoint
+import com.sonarwhale.model.EnvironmentSource
 import com.sonarwhale.openapi.OpenApiFetcher
 import com.sonarwhale.openapi.OpenApiParser
 
@@ -33,14 +34,20 @@ class RouteIndexService(private val project: Project) : Disposable {
     // Debounced file-save trigger: 500ms after last relevant file change
     private val refreshAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
 
+    // 1-minute periodic refresh for ServerUrl and FilePath sources
+    private val intervalAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
+    private val REFRESH_INTERVAL_MS = 60_000
+
     val endpoints: List<ApiEndpoint> get() = cachedEndpoints
 
     init {
-        project.messageBus.connect(this).subscribe(
+        val bus = project.messageBus.connect(this)
+
+        // File-save trigger: refresh on JSON/YAML changes
+        bus.subscribe(
             com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES,
             object : BulkFileListener {
                 override fun after(events: List<VFileEvent>) {
-                    // Refresh when project files change (build output, swagger.json, etc.)
                     val relevant = events.any { e ->
                         val ext = e.file?.extension?.lowercase()
                         ext in listOf("json", "yaml", "yml")
@@ -51,6 +58,23 @@ class RouteIndexService(private val project: Project) : Disposable {
                 }
             }
         )
+
+        scheduleIntervalRefresh()
+    }
+
+    /** Returns true when the active environment warrants automatic refresh (not a static import). */
+    private fun shouldAutoRefresh(): Boolean {
+        val source = EnvironmentService.getInstance(project).getActive()?.source
+        return source != null && source !is EnvironmentSource.StaticImport
+    }
+
+    /** Schedules a recurring 1-minute refresh for live sources. Reschedules itself after each run. */
+    private fun scheduleIntervalRefresh() {
+        if (!shouldAutoRefresh()) return
+        intervalAlarm.addRequest({
+            refresh()
+            scheduleIntervalRefresh()
+        }, REFRESH_INTERVAL_MS)
     }
 
     // -------------------------------------------------------------------------
