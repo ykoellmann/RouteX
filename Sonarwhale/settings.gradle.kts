@@ -18,5 +18,3 @@ pluginManagement {
 }
 
 rootProject.name = "ReSharperPlugin.Sonarwhale"
-
-include(":protocol")
