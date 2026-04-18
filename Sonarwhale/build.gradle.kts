@@ -1,5 +1,9 @@
 import org.apache.tools.ant.taskdefs.condition.Os
 import org.jetbrains.intellij.platform.gradle.Constants
+import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
+import org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask
+
+import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
 
 plugins {
     id("java")
@@ -14,6 +18,7 @@ extra["isWindows"] = isWindows
 val RiderPluginId: String by project
 val ProductVersion: String by project
 val PublishToken: String by project
+val PythonPluginVersion: String by project
 
 allprojects {
     repositories {
@@ -72,13 +77,41 @@ dependencies {
     intellijPlatform {
         rider(ProductVersion, useInstaller = false)
         jetbrainsRuntime()
+        // Python Community Edition — installed in every sandbox; active in runIdePython
+        plugin("PythonCore:${PythonPluginVersion}")
     }
 }
 
+// Disable the generic runIde — use the language-specific configs below instead
 tasks.runIde {
-    // Match Rider's default heap size of 1.5Gb (default for runIde is 512Mb)
-    maxHeapSize = "1500m"
+    enabled = false
 }
+
+// ---------------------------------------------------------------------------
+// Helper: register a named run configuration for a given language.
+//
+// Each task points at the same sandbox that prepareSandbox fills, so the
+// Sonarwhale plugin (and PythonCore) are always present without any extra
+// copying. State isolation (recent projects, IDE settings) can be added later
+// via explicit idea.config.path / idea.system.path JVM args if needed.
+// ---------------------------------------------------------------------------
+fun registerLanguageRunConfig(label: String) {
+    val mainSandboxDir = tasks.named<PrepareSandboxTask>(Constants.Tasks.PREPARE_SANDBOX)
+        .flatMap { it.sandboxDirectory }
+
+    tasks.register<RunIdeTask>("runIde$label") {
+        description = "Run Rider for $label projects"
+        dependsOn(Constants.Tasks.PREPARE_SANDBOX)
+        sandboxDirectory.set(mainSandboxDir)
+        splitMode.set(false)
+        splitModeTarget.set(SplitModeAware.SplitModeTarget.BACKEND)
+        maxHeapSize = "1500m"
+    }
+}
+
+registerLanguageRunConfig("CSharp")   // C# — built into Rider
+registerLanguageRunConfig("Java")     // Java — built into Rider
+registerLanguageRunConfig("Python")   // Python — via PythonCore plugin
 
 tasks.patchPluginXml {
     // TODO: See also org.jetbrains.changelog: https://github.com/JetBrains/gradle-changelog-plugin
