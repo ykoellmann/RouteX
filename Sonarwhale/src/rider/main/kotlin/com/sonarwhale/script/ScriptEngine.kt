@@ -16,6 +16,10 @@ import kotlin.io.path.readText
 /**
  * Executes a list of [ScriptFile]s in order using Mozilla Rhino.
  * All scripts in a chain share the same [ScriptContext] — mutations accumulate.
+ *
+ * The thread classloader is swapped to the plugin classloader before entering Rhino,
+ * because IntelliJ's PathClassLoader would otherwise prevent Rhino from finding
+ * its own internal classes (ContextFactory, etc.).
  */
 class ScriptEngine {
 
@@ -23,37 +27,60 @@ class ScriptEngine {
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
     }
 
-    fun executeChain(scripts: List<ScriptFile>, context: ScriptContext) {
+    fun executeChain(
+        scripts: List<ScriptFile>,
+        context: ScriptContext,
+        console: ConsoleOutput = ConsoleOutput()
+    ) {
         if (scripts.isEmpty()) return
 
-        val cx = Context.enter()
-        cx.optimizationLevel = -1 // interpreted mode — no class generation issues
-        cx.languageVersion = Context.VERSION_ES6
+        val prevCl = Thread.currentThread().contextClassLoader
+        Thread.currentThread().contextClassLoader = ScriptEngine::class.java.classLoader
         try {
-            val scope = cx.initStandardObjects()
-            val swObj = buildSwObject(cx, scope, context)
-            ScriptableObject.putProperty(scope, "sw", swObj)
+            val cx = Context.enter()
+            cx.optimizationLevel = -1   // interpreted mode — no class generation issues
+            cx.languageVersion = Context.VERSION_ES6
+            try {
+                val scope = cx.initStandardObjects()
+                ScriptableObject.putProperty(scope, "sw", buildSwObject(cx, scope, context, console))
+                ScriptableObject.putProperty(scope, "console", buildConsoleObject(console))
 
-            for (script in scripts) {
-                runCatching {
-                    val code = script.path.readText()
-                    cx.evaluateString(scope, code, script.path.name, 1, null)
-                }.onFailure { e ->
-                    context.testResults.add(
-                        TestResult(
-                            name = "Script error in ${script.path.name}",
-                            passed = false,
-                            error = e.message ?: e.javaClass.simpleName
+                for (script in scripts) {
+                    console.scriptStart(script)
+                    runCatching {
+                        val code = script.path.readText()
+                        cx.evaluateString(scope, code, script.path.name, 1, null)
+                    }.onFailure { e ->
+                        console.error(script, e)
+                        context.testResults.add(
+                            TestResult(
+                                name = "Script error in ${script.path.name}",
+                                passed = false,
+                                error = e.message ?: e.javaClass.simpleName
+                            )
                         )
-                    )
+                    }
                 }
+            } finally {
+                Context.exit()
             }
         } finally {
-            Context.exit()
+            Thread.currentThread().contextClassLoader = prevCl
         }
     }
 
-    private fun buildSwObject(cx: Context, scope: Scriptable, context: ScriptContext): NativeObject {
+    private fun buildConsoleObject(console: ConsoleOutput): NativeObject {
+        val obj = NativeObject()
+        obj.put("log",   obj, rhinoFn { _, _, args ->
+            console.log(LogLevel.LOG,   args.joinToString(" ") { it?.toString() ?: "null" }); null })
+        obj.put("warn",  obj, rhinoFn { _, _, args ->
+            console.log(LogLevel.WARN,  args.joinToString(" ") { it?.toString() ?: "null" }); null })
+        obj.put("error", obj, rhinoFn { _, _, args ->
+            console.log(LogLevel.ERROR, args.joinToString(" ") { it?.toString() ?: "null" }); null })
+        return obj
+    }
+
+    private fun buildSwObject(cx: Context, scope: Scriptable, context: ScriptContext, console: ConsoleOutput): NativeObject {
         val sw = NativeObject()
 
         // ── sw.env ───────────────────────────────────────────────────────────
@@ -114,20 +141,20 @@ class ScriptEngine {
         http.put("get", http, rhinoFn { c, s, args ->
             val url     = args.getOrNull(0)?.toString() ?: return@rhinoFn null
             val headers = (args.getOrNull(1) as? NativeObject)?.toHeaderMap() ?: emptyMap()
-            makeHttpCall(c, s, "GET", url, null, headers)
+            makeHttpCall(c, s, "GET", url, null, headers, console)
         })
         http.put("post", http, rhinoFn { c, s, args ->
             val url     = args.getOrNull(0)?.toString() ?: return@rhinoFn null
             val body    = args.getOrNull(1)?.toString() ?: ""
             val headers = (args.getOrNull(2) as? NativeObject)?.toHeaderMap() ?: emptyMap()
-            makeHttpCall(c, s, "POST", url, body, headers)
+            makeHttpCall(c, s, "POST", url, body, headers, console)
         })
         http.put("request", http, rhinoFn { c, s, args ->
             val method  = args.getOrNull(0)?.toString()?.uppercase() ?: "GET"
             val url     = args.getOrNull(1)?.toString() ?: return@rhinoFn null
             val body    = args.getOrNull(2)?.toString()
             val headers = (args.getOrNull(3) as? NativeObject)?.toHeaderMap() ?: emptyMap()
-            makeHttpCall(c, s, method, url, body, headers)
+            makeHttpCall(c, s, method, url, body, headers, console)
         })
         sw.put("http", sw, http)
 
@@ -141,7 +168,6 @@ class ScriptEngine {
                 runCatching { fn.call(c, s, s, emptyArray()) }
                     .fold(
                         onSuccess = { returnVal ->
-                            // treat explicit `return false` (Rhino returns java.lang.Boolean false) as failure
                             val passed = returnVal != java.lang.Boolean.FALSE
                             TestResult(name, passed, if (passed) null else "Test function returned false")
                         },
@@ -166,29 +192,36 @@ class ScriptEngine {
         expect.put("toBe", expect, rhinoFn { _, _, args ->
             val expected = args.getOrNull(0)
             val passed = actual == expected
-            context.testResults.add(TestResult("expect.toBe", passed, if (passed) null else "Expected $expected but got $actual"))
+            context.testResults.add(TestResult("expect.toBe", passed,
+                if (passed) null else "Expected $expected but got $actual"))
             null
         })
         expect.put("toEqual", expect, rhinoFn { _, _, args ->
             val expected = args.getOrNull(0)?.toString()
             val passed = actual?.toString() == expected
-            context.testResults.add(TestResult("expect.toEqual", passed, if (passed) null else "Expected $expected but got $actual"))
+            context.testResults.add(TestResult("expect.toEqual", passed,
+                if (passed) null else "Expected $expected but got $actual"))
             null
         })
         expect.put("toBeTruthy", expect, rhinoFn { _, _, _ ->
-            val passed = actual != null && actual != false && actual.toString() != "false" && actual.toString() != "0"
-            context.testResults.add(TestResult("expect.toBeTruthy", passed, if (passed) null else "Expected truthy but got $actual"))
+            val passed = actual != null && actual != false &&
+                    actual.toString() != "false" && actual.toString() != "0"
+            context.testResults.add(TestResult("expect.toBeTruthy", passed,
+                if (passed) null else "Expected truthy but got $actual"))
             null
         })
         expect.put("toBeFalsy", expect, rhinoFn { _, _, _ ->
-            val passed = actual == null || actual == false || actual.toString() == "false" || actual.toString() == "0"
-            context.testResults.add(TestResult("expect.toBeFalsy", passed, if (passed) null else "Expected falsy but got $actual"))
+            val passed = actual == null || actual == false ||
+                    actual.toString() == "false" || actual.toString() == "0"
+            context.testResults.add(TestResult("expect.toBeFalsy", passed,
+                if (passed) null else "Expected falsy but got $actual"))
             null
         })
         expect.put("toContain", expect, rhinoFn { _, _, args ->
             val substr = args.getOrNull(0)?.toString() ?: ""
             val passed = actual?.toString()?.contains(substr) == true
-            context.testResults.add(TestResult("expect.toContain", passed, if (passed) null else "Expected $actual to contain '$substr'"))
+            context.testResults.add(TestResult("expect.toContain", passed,
+                if (passed) null else "Expected $actual to contain '$substr'"))
             null
         })
         return expect
@@ -200,10 +233,11 @@ class ScriptEngine {
         method: String,
         url: String,
         body: String?,
-        headers: Map<String, String>
+        headers: Map<String, String>,
+        console: ConsoleOutput
     ): NativeObject {
+        val start = System.currentTimeMillis()
         return runCatching {
-            val client = httpClient
             val builder = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(30))
@@ -213,14 +247,21 @@ class ScriptEngine {
             else
                 HttpRequest.BodyPublishers.noBody()
             builder.method(method, publisher)
-            val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-            buildResponseObject(cx, scope, response.statusCode(), response.headers().map().mapValues { (_, vs) -> vs.firstOrNull() ?: "" }, response.body())
+            val response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+            val duration = System.currentTimeMillis() - start
+            val respHeaders = response.headers().map().mapValues { (_, vs) -> vs.firstOrNull() ?: "" }
+            console.http(method, url, response.statusCode(), duration,
+                headers, body, respHeaders, response.body(), null)
+            buildResponseObject(cx, scope, response.statusCode(), respHeaders, response.body())
         }.getOrElse { e ->
+            val duration = System.currentTimeMillis() - start
+            console.http(method, url, 0, duration, headers, body, emptyMap(), "", e.message)
             buildErrorResponseObject(cx, scope, e)
         }
     }
 
-    private fun buildResponseObject(cx: Context, scope: Scriptable, status: Int, headers: Map<String, String>, responseBody: String): NativeObject {
+    private fun buildResponseObject(cx: Context, scope: Scriptable, status: Int,
+                                    headers: Map<String, String>, responseBody: String): NativeObject {
         val resObj = NativeObject()
         resObj.put("status", resObj, status)
         resObj.put("body", resObj, responseBody)
@@ -244,7 +285,6 @@ class ScriptEngine {
         return resObj
     }
 
-    /** Convenience: create a Rhino callable from a Kotlin lambda. */
     private fun rhinoFn(block: (cx: Context, scope: Scriptable, args: Array<out Any?>) -> Any?): org.mozilla.javascript.BaseFunction {
         return object : org.mozilla.javascript.BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable?, args: Array<out Any?>): Any? =

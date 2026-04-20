@@ -1,5 +1,8 @@
 package com.sonarwhale.script
 
+import com.sonarwhale.script.ConsoleEntry
+import com.sonarwhale.script.ConsoleOutput
+import com.sonarwhale.script.LogLevel
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -172,5 +175,49 @@ class ScriptEngineTest {
         engine().executeChain(listOf(script), ctx)
         assertEquals(1, ctx.testResults.size)
         assertFalse(ctx.testResults[0].passed)
+    }
+
+    @Test
+    fun `console log is captured in ConsoleOutput`() {
+        val ctx = ctx()
+        val script = scriptFile("pre.js", """console.log("hello from script");""")
+        val console = ConsoleOutput()
+        engine().executeChain(listOf(script), ctx, console)
+        val logs = console.entries.filterIsInstance<ConsoleEntry.LogEntry>()
+        assertEquals(1, logs.size)
+        assertEquals("hello from script", logs[0].message)
+        assertEquals(LogLevel.LOG, logs[0].level)
+    }
+
+    @Test
+    fun `console warn uses WARN level`() {
+        val ctx = ctx()
+        val script = scriptFile("pre.js", """console.warn("attention");""")
+        val console = ConsoleOutput()
+        engine().executeChain(listOf(script), ctx, console)
+        val logs = console.entries.filterIsInstance<ConsoleEntry.LogEntry>()
+        assertEquals(LogLevel.WARN, logs[0].level)
+    }
+
+    @Test
+    fun `ScriptBoundary emitted per script`() {
+        val ctx = ctx()
+        val s1 = scriptFile("s1.js", "")
+        val s2 = scriptFile("s2.js", "")
+        val console = ConsoleOutput()
+        engine().executeChain(listOf(s1, s2), ctx, console)
+        val boundaries = console.entries.filterIsInstance<ConsoleEntry.ScriptBoundary>()
+        assertEquals(2, boundaries.size)
+    }
+
+    @Test
+    fun `script error adds ErrorEntry to ConsoleOutput`() {
+        val ctx = ctx()
+        val script = scriptFile("bad.js", """this is not valid JS @@###""")
+        val console = ConsoleOutput()
+        engine().executeChain(listOf(script), ctx, console)
+        val errors = console.entries.filterIsInstance<ConsoleEntry.ErrorEntry>()
+        assertEquals(1, errors.size)
+        assertTrue(errors[0].scriptPath.endsWith("bad.js"))
     }
 }
