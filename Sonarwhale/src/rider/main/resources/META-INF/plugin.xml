@@ -47,6 +47,9 @@
     <!-- Project-level service: maps endpoint IDs to C# source file + line for navigation -->
     <projectService serviceImplementation="com.sonarwhale.gutter.SourceLocationService"/>
 
+    <!-- Project-level service: executes pre/post JS scripts for requests -->
+    <projectService serviceImplementation="com.sonarwhale.script.SonarwhaleScriptService"/>
+
     <!-- Trigger initial OpenAPI fetch after project opens -->
     <postStartupActivity implementation="com.sonarwhale.SonarwhaleStartupActivity"/>
 
