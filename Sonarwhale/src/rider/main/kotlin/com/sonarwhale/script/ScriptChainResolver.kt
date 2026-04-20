@@ -1,0 +1,75 @@
+package com.sonarwhale.script
+
+import java.nio.file.Path
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+
+/**
+ * Resolves the ordered list of pre/post script files for a given endpoint + request.
+ * Scripts live at [projectRoot]/scripts/ in a directory hierarchy.
+ *
+ * Pre-chain: global → tag → endpoint → request
+ * Post-chain: request → endpoint → tag → global  (reversed)
+ *
+ * inherit.off at any level stops all parent levels from being included.
+ */
+class ScriptChainResolver(private val projectRoot: Path) {
+
+    private val scriptsRoot: Path get() = projectRoot.resolve("scripts")
+
+    fun resolvePreChain(tag: String, method: String, path: String, requestName: String): List<ScriptFile> =
+        buildChain(tag, method, path, requestName, ScriptPhase.PRE)
+
+    fun resolvePostChain(tag: String, method: String, path: String, requestName: String): List<ScriptFile> =
+        buildChain(tag, method, path, requestName, ScriptPhase.POST).reversed()
+
+    private fun buildChain(
+        tag: String,
+        method: String,
+        path: String,
+        requestName: String,
+        phase: ScriptPhase
+    ): List<ScriptFile> {
+        if (!scriptsRoot.exists()) return emptyList()
+
+        val endpointDirName = sanitizeEndpointDir(method, path)
+        val requestDirName  = sanitizeName(requestName)
+        val tagDirName      = sanitizeName(tag)
+        val fileName        = if (phase == ScriptPhase.PRE) "pre.js" else "post.js"
+
+        data class Level(val dir: Path, val level: ScriptLevel)
+
+        val levels = listOf(
+            Level(scriptsRoot, ScriptLevel.GLOBAL),
+            Level(scriptsRoot.resolve(tagDirName), ScriptLevel.TAG),
+            Level(scriptsRoot.resolve(tagDirName).resolve(endpointDirName), ScriptLevel.ENDPOINT),
+            Level(scriptsRoot.resolve(tagDirName).resolve(endpointDirName).resolve(requestDirName), ScriptLevel.REQUEST)
+        )
+
+        // Find the innermost (deepest) level with inherit.off — include only that level and below
+        val firstInheritOff = levels.indexOfFirst { it.dir.resolve("inherit.off").exists() }
+
+        val includedLevels = if (firstInheritOff == -1) {
+            levels
+        } else {
+            levels.drop(firstInheritOff)
+        }
+
+        return includedLevels.mapNotNull { (dir, level) ->
+            val scriptFile = dir.resolve(fileName)
+            if (scriptFile.exists() && scriptFile.isRegularFile()) {
+                ScriptFile(level = level, phase = phase, path = scriptFile)
+            } else null
+        }
+    }
+
+    companion object {
+        fun sanitizeName(name: String): String =
+            name.trim().replace(' ', '_').replace('/', '_').trimStart('_')
+
+        fun sanitizeEndpointDir(method: String, path: String): String {
+            val sanitizedPath = path.trimStart('/').replace('/', '_')
+            return "${method.uppercase()}__${sanitizedPath}"
+        }
+    }
+}
