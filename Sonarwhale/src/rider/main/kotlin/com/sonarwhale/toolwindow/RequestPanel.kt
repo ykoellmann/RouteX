@@ -395,35 +395,54 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         if (rawUrl.isEmpty()) return
 
         saveRequest()
-
         sendButton.isEnabled = false
 
-        // Resolve environment variables in headers and body before sending
         val headerRows = headersTable.getRows()
             .filter { it.enabled && it.key.isNotEmpty() }
             .map { it.copy(value = stateService.resolveVariables(it.value)) }
         val bodyContent = bodyPanel.getContent().let { bc ->
             when (bc) {
-                is BodyContent.Raw -> bc.copy(text = stateService.resolveVariables(bc.text))
-                is BodyContent.FormData -> bc.copy(rows = bc.rows.map { r ->
-                    r.copy(value = stateService.resolveVariables(r.value))
-                })
+                is BodyContent.Raw      -> bc.copy(text = stateService.resolveVariables(bc.text))
+                is BodyContent.FormData -> bc.copy(rows = bc.rows.map { r -> r.copy(value = stateService.resolveVariables(r.value)) })
                 else -> bc
             }
         }
 
+        val savedRequest = currentRequest ?: SavedRequest(name = currentRequestName)
+        val scriptService = SonarwhaleScriptService.getInstance(project)
+
         object : SwingWorker<Triple<Int, String, Long>, Unit>() {
+            private var testResults: List<TestResult> = emptyList()
+            private var scriptContext: com.sonarwhale.script.ScriptContext? = null
+
             override fun doInBackground(): Triple<Int, String, Long> {
+                // ── Pre-scripts ────────────────────────────────────────────────
+                val initialHeaders = headerRows.associate { it.key.trim() to it.value.trim() }.toMutableMap()
+                val initialBody = when (val bc = bodyContent) {
+                    is BodyContent.Raw -> bc.text
+                    else -> ""
+                }
+                val ctx = scriptService.executePreScripts(
+                    endpoint = endpoint,
+                    request  = savedRequest,
+                    url      = rawUrl,
+                    headers  = initialHeaders,
+                    body     = initialBody
+                )
+                scriptContext = ctx
+
+                val finalUrl     = ctx.request.url
+                val finalHeaders = ctx.request.headers
+                val finalBody    = ctx.request.body
+
+                // ── HTTP Request ───────────────────────────────────────────────
                 val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
                 val builder = HttpRequest.newBuilder()
-                    .uri(URI.create(rawUrl))
+                    .uri(URI.create(finalUrl))
                     .timeout(Duration.ofSeconds(30))
 
-                headerRows.forEach { row ->
-                    runCatching { builder.header(row.key.trim(), row.value.trim()) }
-                }
-
-                val hasContentType = headerRows.any { it.key.trim().equals("content-type", ignoreCase = true) }
+                finalHeaders.forEach { (k, v) -> runCatching { builder.header(k, v) } }
+                val hasContentType = finalHeaders.keys.any { it.equals("content-type", ignoreCase = true) }
 
                 when (val bc = bodyContent) {
                     is BodyContent.None -> when (endpoint.method.name) {
@@ -432,8 +451,9 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                         else          -> builder.method(endpoint.method.name, HttpRequest.BodyPublishers.noBody())
                     }
                     is BodyContent.Raw -> {
+                        val body = finalBody.ifEmpty { bc.text }
                         if (!hasContentType) builder.header("Content-Type", bc.contentType)
-                        val publisher = HttpRequest.BodyPublishers.ofString(bc.text)
+                        val publisher = HttpRequest.BodyPublishers.ofString(body)
                         when (endpoint.method.name) {
                             "POST"        -> builder.POST(publisher)
                             "PUT"         -> builder.PUT(publisher)
@@ -468,7 +488,21 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
 
                 val start = System.currentTimeMillis()
                 val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-                return Triple(response.statusCode(), response.body(), System.currentTimeMillis() - start)
+                val duration = System.currentTimeMillis() - start
+
+                // ── Post-scripts ───────────────────────────────────────────────
+                val responseHeaders = response.headers().map()
+                    .mapValues { (_, vs) -> vs.firstOrNull() ?: "" }
+                testResults = scriptService.executePostScripts(
+                    endpoint        = endpoint,
+                    request         = savedRequest,
+                    statusCode      = response.statusCode(),
+                    responseHeaders = responseHeaders,
+                    responseBody    = response.body(),
+                    scriptContext   = ctx
+                )
+
+                return Triple(response.statusCode(), response.body(), duration)
             }
 
             override fun done() {
@@ -476,8 +510,10 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                 runCatching {
                     val (status, body, duration) = get()
                     onResponseReceived?.invoke(status, body, duration)
+                    onTestResultsReceived?.invoke(testResults)
                 }.onFailure { e ->
                     onResponseReceived?.invoke(0, describeError(e), 0)
+                    onTestResultsReceived?.invoke(emptyList())
                 }
             }
         }.execute()

@@ -54,6 +54,9 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()) {
         requestPanel.onResponseReceived = { status, body, duration ->
             responsePanel.showResponse(status, body, duration)
         }
+        requestPanel.onTestResultsReceived = { results ->
+            responsePanel.showTestResults(results)
+        }
         add(headerHolder, BorderLayout.NORTH)
         add(cardPanel,    BorderLayout.CENTER)
         cardLayout.show(cardPanel, "empty")
