@@ -23,13 +23,15 @@ class SonarwhaleScriptService(private val project: Project) {
     /**
      * Executes pre-scripts and returns the modified [ScriptContext].
      * Must be called from a background thread — sw.http makes blocking network calls.
+     * Errors are captured into [console] rather than thrown.
      */
     fun executePreScripts(
         endpoint: ApiEndpoint,
         request: SavedRequest,
         url: String,
         headers: Map<String, String>,
-        body: String
+        body: String,
+        console: ConsoleOutput = ConsoleOutput()
     ): ScriptContext {
         val stateService = SonarwhaleStateService.getInstance(project)
         val env = stateService.getActiveEnvironment()?.variables?.toMutableMap() ?: mutableMapOf()
@@ -44,7 +46,10 @@ class SonarwhaleScriptService(private val project: Project) {
         )
         val tag = endpoint.tags.firstOrNull() ?: "Default"
         val chain = resolver.resolvePreChain(tag, endpoint.method.name, endpoint.path, request.name)
-        engine.executeChain(chain, ctx)
+        runCatching { engine.executeChain(chain, ctx, console) }
+            .onFailure { e ->
+                console.log(LogLevel.ERROR, "Pre-script chain failed: ${e.message ?: e.javaClass.simpleName}")
+            }
         flushEnvChanges(ctx.envSnapshot)
         return ctx
     }
@@ -52,6 +57,7 @@ class SonarwhaleScriptService(private val project: Project) {
     /**
      * Executes post-scripts and returns the collected [TestResult]s.
      * Must be called from a background thread.
+     * Errors are captured into [console] rather than thrown.
      */
     fun executePostScripts(
         endpoint: ApiEndpoint,
@@ -59,7 +65,8 @@ class SonarwhaleScriptService(private val project: Project) {
         statusCode: Int,
         responseHeaders: Map<String, String>,
         responseBody: String,
-        scriptContext: ScriptContext
+        scriptContext: ScriptContext,
+        console: ConsoleOutput = ConsoleOutput()
     ): List<TestResult> {
         val response = ResponseContext(statusCode, responseHeaders, responseBody)
         val postCtx = ScriptContext(
@@ -69,39 +76,55 @@ class SonarwhaleScriptService(private val project: Project) {
         )
         val tag = endpoint.tags.firstOrNull() ?: "Default"
         val chain = resolver.resolvePostChain(tag, endpoint.method.name, endpoint.path, request.name)
-        engine.executeChain(chain, postCtx)
+        runCatching { engine.executeChain(chain, postCtx, console) }
+            .onFailure { e ->
+                console.log(LogLevel.ERROR, "Post-script chain failed: ${e.message ?: e.javaClass.simpleName}")
+            }
         flushEnvChanges(postCtx.envSnapshot)
         return postCtx.testResults
     }
 
     /**
-     * Creates the pre.js or post.js file at the appropriate level for the given endpoint+request.
-     * Returns the path so the caller can open it in the IDE editor.
+     * Returns the expected filesystem path for a script without creating anything.
+     * Used by [FolderScriptsPanel] to check whether a script exists.
+     */
+    fun getScriptPath(
+        phase: ScriptPhase,
+        level: ScriptLevel,
+        tag: String? = null,
+        endpoint: ApiEndpoint? = null,
+        request: SavedRequest? = null
+    ): Path {
+        val fileName = if (phase == ScriptPhase.PRE) "pre.js" else "post.js"
+        val root = scriptsRoot()
+        return when (level) {
+            ScriptLevel.GLOBAL   -> root.resolve(fileName)
+            ScriptLevel.TAG      -> root.resolve(sanitize(tag)).resolve(fileName)
+            ScriptLevel.ENDPOINT -> root.resolve(sanitize(tag))
+                .resolve(endpointDir(endpoint)).resolve(fileName)
+            ScriptLevel.REQUEST  -> root.resolve(sanitize(tag))
+                .resolve(endpointDir(endpoint)).resolve(sanitize(request?.name ?: "Default")).resolve(fileName)
+        }
+    }
+
+    /**
+     * Creates pre.js or post.js at the appropriate level and returns the path.
      * If the file already exists, returns the existing path without overwriting.
+     * For GLOBAL level, [tag], [endpoint], and [request] may all be null.
+     * For TAG level, [tag] must be provided.
+     * For ENDPOINT level, [tag] and [endpoint] must be provided.
+     * For REQUEST level, all parameters must be provided.
      */
     fun getOrCreateScript(
-        endpoint: ApiEndpoint,
-        request: SavedRequest,
         phase: ScriptPhase,
-        level: ScriptLevel = ScriptLevel.REQUEST
+        level: ScriptLevel,
+        tag: String? = null,
+        endpoint: ApiEndpoint? = null,
+        request: SavedRequest? = null
     ): Path {
-        val tag         = endpoint.tags.firstOrNull() ?: "Default"
-        val endpointDir = ScriptChainResolver.sanitizeEndpointDir(endpoint.method.name, endpoint.path)
-        val requestDir  = ScriptChainResolver.sanitizeName(request.name)
-        val tagDir      = ScriptChainResolver.sanitizeName(tag)
-        val fileName    = if (phase == ScriptPhase.PRE) "pre.js" else "post.js"
-        val root        = scriptsRoot()
-
-        val dir = when (level) {
-            ScriptLevel.GLOBAL   -> root
-            ScriptLevel.TAG      -> root.resolve(tagDir)
-            ScriptLevel.ENDPOINT -> root.resolve(tagDir).resolve(endpointDir)
-            ScriptLevel.REQUEST  -> root.resolve(tagDir).resolve(endpointDir).resolve(requestDir)
-        }
-        dir.createDirectories()
+        val scriptPath = getScriptPath(phase, level, tag, endpoint, request)
+        scriptPath.parent.createDirectories()
         ensureSwDts()
-
-        val scriptPath = dir.resolve(fileName)
         if (!scriptPath.exists()) {
             val comment = when (phase) {
                 ScriptPhase.PRE  -> "// Pre-script: runs before the HTTP request\n// Available: sw.env, sw.request, sw.http\n\n"
@@ -112,21 +135,62 @@ class SonarwhaleScriptService(private val project: Project) {
         return scriptPath
     }
 
-    /** Writes sw.d.ts to .sonarwhale/scripts/ if it does not exist yet. */
+    /**
+     * Convenience overload for creating a REQUEST-level script (used by Pre/Post buttons in RequestPanel).
+     */
+    fun getOrCreateScript(
+        endpoint: ApiEndpoint,
+        request: SavedRequest,
+        phase: ScriptPhase,
+        level: ScriptLevel = ScriptLevel.REQUEST
+    ): Path = getOrCreateScript(
+        phase = phase,
+        level = level,
+        tag = endpoint.tags.firstOrNull() ?: "Default",
+        endpoint = endpoint,
+        request = request
+    )
+
+    /** Writes sw.d.ts and jsconfig.json to .sonarwhale/scripts/ if they do not exist yet. */
     fun ensureSwDts() {
         val root = scriptsRoot()
         root.createDirectories()
         val dts = root.resolve("sw.d.ts")
-        if (!dts.exists()) {
-            dts.writeText(SW_DTS_CONTENT)
+        if (!dts.exists()) dts.writeText(SW_DTS_CONTENT)
+        ensureJsConfig()
+    }
+
+    private fun ensureJsConfig() {
+        val root = scriptsRoot()
+        root.createDirectories()
+        val jsconfig = root.resolve("jsconfig.json")
+        if (!jsconfig.exists()) {
+            jsconfig.writeText("""
+                {
+                  "compilerOptions": {
+                    "checkJs": true,
+                    "strict": false,
+                    "target": "ES6"
+                  },
+                  "include": ["./**/*.js"],
+                  "exclude": []
+                }
+            """.trimIndent())
         }
     }
 
     private fun scriptsRoot(): Path =
         Path.of(project.basePath ?: ".").resolve(".sonarwhale").resolve("scripts")
 
+    private fun sanitize(name: String?): String =
+        ScriptChainResolver.sanitizeName(name ?: "Default")
+
+    private fun endpointDir(endpoint: ApiEndpoint?): String =
+        if (endpoint != null) ScriptChainResolver.sanitizeEndpointDir(endpoint.method.name, endpoint.path)
+        else "unknown"
+
     private fun flushEnvChanges(snapshot: MutableMap<String, String>) {
-        val copy = LinkedHashMap(snapshot) // capture before background/EDT handoff
+        val copy = LinkedHashMap(snapshot)
         ApplicationManager.getApplication().invokeLater {
             val stateService = SonarwhaleStateService.getInstance(project)
             val env = stateService.getActiveEnvironment() ?: return@invokeLater
