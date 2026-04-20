@@ -136,8 +136,16 @@ class FolderScriptsPanel(
                     null
                 )
                 if (answer == Messages.YES) {
-                    Files.deleteIfExists(scriptPath)
-                    onRefresh()   // DetailPanel recreates FolderScriptsPanel, re-reading filesystem
+                    ProgressManager.getInstance().run(
+                        object : Task.Backgroundable(project, "Deleting script…", false) {
+                            override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
+                                Files.deleteIfExists(scriptPath)
+                                com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                                    onRefresh()
+                                }
+                            }
+                        }
+                    )
                 }
             }
             row.add(editBtn)

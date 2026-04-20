@@ -18,8 +18,6 @@ import com.sonarwhale.service.EnvironmentService
 import com.sonarwhale.service.RouteIndexService
 import java.awt.BorderLayout
 import java.awt.FlowLayout
-import javax.swing.ComboBoxModel
-import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JPanel
