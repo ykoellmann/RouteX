@@ -100,9 +100,11 @@ class SonarwhaleStateService(@Suppress("UNUSED_PARAMETER") project: Project) : P
     }
 
     fun getActiveEnvironment(): Environment? {
+        val envs = getEnvironments()
+        if (envs.isEmpty()) return null
         val id = myState.activeEnvironmentId
-        if (id.isBlank()) return null
-        return getEnvironments().firstOrNull { it.id == id }
+        if (id.isBlank()) return envs.firstOrNull()
+        return envs.firstOrNull { it.id == id } ?: envs.firstOrNull()
     }
 
     fun setActiveEnvironment(id: String) {
