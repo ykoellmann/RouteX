@@ -198,13 +198,13 @@ class EndpointTree(private val project: Project) : Tree() {
     }
 
     private fun buildControllerMenu(group: DefaultActionGroup, node: ControllerNode) {
-        group.add(object : AnAction("Create Pre-Script (${node.name})",
+        group.add(object : AnAction("Create Pre-Script (Tag)",
             "Create pre.js for this tag/controller", AllIcons.Actions.Edit) {
             override fun actionPerformed(e: AnActionEvent) {
                 openOrCreateScriptInBackground(ScriptPhase.PRE, ScriptLevel.TAG, tag = node.name)
             }
         })
-        group.add(object : AnAction("Create Post-Script (${node.name})",
+        group.add(object : AnAction("Create Post-Script (Tag)",
             "Create post.js for this tag/controller", AllIcons.Actions.Edit) {
             override fun actionPerformed(e: AnActionEvent) {
                 openOrCreateScriptInBackground(ScriptPhase.POST, ScriptLevel.TAG, tag = node.name)
