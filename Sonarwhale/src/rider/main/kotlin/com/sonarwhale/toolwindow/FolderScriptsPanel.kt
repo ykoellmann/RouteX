@@ -1,8 +1,7 @@
 package com.sonarwhale.toolwindow
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -136,16 +135,15 @@ class FolderScriptsPanel(
                     null
                 )
                 if (answer == Messages.YES) {
-                    ProgressManager.getInstance().run(
-                        object : Task.Backgroundable(project, "Deleting script…", false) {
-                            override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                                Files.deleteIfExists(scriptPath)
-                                com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-                                    onRefresh()
-                                }
-                            }
+                    val vf = LocalFileSystem.getInstance().findFileByNioFile(scriptPath)
+                    if (vf != null && vf.isValid) {
+                        ApplicationManager.getApplication().runWriteAction {
+                            runCatching { vf.delete(null) }
                         }
-                    )
+                    } else {
+                        runCatching { Files.deleteIfExists(scriptPath) }
+                    }
+                    onRefresh()
                 }
             }
             row.add(editBtn)
@@ -157,14 +155,10 @@ class FolderScriptsPanel(
             })
             val createBtn = JButton("Create").apply { font = font.deriveFont(10f) }
             createBtn.addActionListener {
-                ProgressManager.getInstance().run(
-                    object : Task.Backgroundable(project, "Creating script…", false) {
-                        override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                            val path = scriptService.getOrCreateScript(phase, level, tag, endpoint, request)
-                            openFile(path)
-                        }
-                    }
-                )
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    val path = scriptService.getOrCreateScript(phase, level, tag, endpoint, request)
+                    openFile(path)
+                }
             }
             row.add(createBtn)
         }
@@ -173,9 +167,12 @@ class FolderScriptsPanel(
     }
 
     private fun openFile(path: java.nio.file.Path) {
-        val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return
-        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-            FileEditorManager.getInstance(project).openFile(vf, true)
+        // Refresh VFS on a pooled thread, then open in editor on EDT.
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return@executeOnPooledThread
+            ApplicationManager.getApplication().invokeLater {
+                FileEditorManager.getInstance(project).openFile(vf, true)
+            }
         }
     }
 }
