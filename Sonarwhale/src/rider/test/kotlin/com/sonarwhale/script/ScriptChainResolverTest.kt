@@ -13,10 +13,11 @@ class ScriptChainResolverTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private fun resolver() = ScriptChainResolver(tempDir)
+    private fun scriptsRoot(): Path = tempDir.resolve("scripts").also { it.createDirectories() }
+    private fun resolver() = ScriptChainResolver(scriptsRoot())
 
     private fun scriptDir(vararg parts: String): Path =
-        tempDir.resolve("scripts").let { base ->
+        scriptsRoot().let { base ->
             parts.fold(base) { acc, part -> acc.resolve(part) }
         }.also { it.createDirectories() }
 
@@ -121,5 +122,28 @@ class ScriptChainResolverTest {
         val chain = resolver().resolvePreChain("Users", "GET", "/api/users", "Default")
         assertEquals(1, chain.size)
         assertEquals(ScriptLevel.GLOBAL, chain[0].level)
+    }
+
+    @Test
+    fun `inherit off at request level stops all parent scripts`() {
+        val globalPre = pre()
+        val tagPre = pre("Users")
+        val endpointPre = pre("Users", "GET__api_users")
+        inheritOff("Users", "GET__api_users", "Default")
+        val chain = resolver().resolvePreChain("Users", "GET", "/api/users", "Default")
+        assertTrue(chain.none { it.level == ScriptLevel.GLOBAL || it.level == ScriptLevel.TAG || it.level == ScriptLevel.ENDPOINT })
+    }
+
+    @Test
+    fun `inherit off at deepest level wins when multiple inherit off exist`() {
+        val globalPre = pre()
+        val tagPre = pre("Users")
+        val endpointPre = pre("Users", "GET__api_users")
+        inheritOff("Users")          // tag level inherit.off
+        inheritOff("Users", "GET__api_users") // endpoint level inherit.off — this is deeper, should win
+        val chain = resolver().resolvePreChain("Users", "GET", "/api/users", "Default")
+        // endpoint inherit.off wins: TAG and GLOBAL excluded, ENDPOINT included
+        assertTrue(chain.none { it.level == ScriptLevel.GLOBAL || it.level == ScriptLevel.TAG })
+        assertTrue(chain.any { it.level == ScriptLevel.ENDPOINT })
     }
 }

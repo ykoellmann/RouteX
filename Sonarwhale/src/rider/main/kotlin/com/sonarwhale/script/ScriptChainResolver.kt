@@ -6,16 +6,14 @@ import kotlin.io.path.isRegularFile
 
 /**
  * Resolves the ordered list of pre/post script files for a given endpoint + request.
- * Scripts live at [projectRoot]/scripts/ in a directory hierarchy.
+ * Scripts live in a directory hierarchy rooted at [scriptsRoot].
  *
  * Pre-chain: global → tag → endpoint → request
  * Post-chain: request → endpoint → tag → global  (reversed)
  *
  * inherit.off at any level stops all parent levels from being included.
  */
-class ScriptChainResolver(private val projectRoot: Path) {
-
-    private val scriptsRoot: Path get() = projectRoot.resolve("scripts")
+class ScriptChainResolver(private val scriptsRoot: Path) {
 
     fun resolvePreChain(tag: String, method: String, path: String, requestName: String): List<ScriptFile> =
         buildChain(tag, method, path, requestName, ScriptPhase.PRE)
@@ -46,13 +44,13 @@ class ScriptChainResolver(private val projectRoot: Path) {
             Level(scriptsRoot.resolve(tagDirName).resolve(endpointDirName).resolve(requestDirName), ScriptLevel.REQUEST)
         )
 
-        // Find the innermost (deepest) level with inherit.off — include only that level and below
-        val firstInheritOff = levels.indexOfFirst { it.dir.resolve("inherit.off").exists() }
+        // Find the deepest inherit.off in the hierarchy — include only that level and below
+        val deepestInheritOff = levels.indexOfLast { it.dir.resolve("inherit.off").exists() }
 
-        val includedLevels = if (firstInheritOff == -1) {
+        val includedLevels = if (deepestInheritOff == -1) {
             levels
         } else {
-            levels.drop(firstInheritOff)
+            levels.drop(deepestInheritOff)
         }
 
         return includedLevels.mapNotNull { (dir, level) ->
