@@ -2,7 +2,9 @@ package com.sonarwhale.toolwindow
 
 import com.google.gson.reflect.TypeToken
 import com.google.gson.Gson
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
@@ -15,6 +17,10 @@ import com.sonarwhale.model.AuthType
 import com.sonarwhale.model.toJsonTemplate
 import com.sonarwhale.model.ParameterLocation
 import com.sonarwhale.model.SavedRequest
+import com.sonarwhale.script.ScriptLevel
+import com.sonarwhale.script.ScriptPhase
+import com.sonarwhale.script.SonarwhaleScriptService
+import com.sonarwhale.script.TestResult
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Font
@@ -54,6 +60,16 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         toolTipText = "Mark as default (run by gutter icon)"
         isFocusable = false
     }
+    private val preScriptButton = JButton("⚡ Pre").apply {
+        font = font.deriveFont(10f)
+        toolTipText = "Create or open pre-script for this request"
+        isFocusable = false
+    }
+    private val postScriptButton = JButton("⚡ Post").apply {
+        font = font.deriveFont(10f)
+        toolTipText = "Create or open post-script for this request"
+        isFocusable = false
+    }
 
     // URL bar
     private val baseUrlField = JTextField(stateService.baseUrl).apply {
@@ -84,6 +100,7 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
     var onRequestSaved: (() -> Unit)? = null
     /** Called when the default state changes (true = is now default). */
     var onDefaultStateChanged: ((Boolean) -> Unit)? = null
+    var onTestResultsReceived: ((List<TestResult>) -> Unit)? = null
 
     /** Called by DetailPanel when the user edits the name field in the header. */
     fun setRequestName(name: String) { currentRequestName = name }
@@ -110,6 +127,8 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         sendButton.addActionListener { sendRequest() }
         saveButton.addActionListener { saveRequest() }
         setDefaultButton.addActionListener { setAsDefault() }
+        preScriptButton.addActionListener  { openOrCreateScript(ScriptPhase.PRE) }
+        postScriptButton.addActionListener { openOrCreateScript(ScriptPhase.POST) }
         baseUrlField.document.addDocumentListener(recomputeListener)
         paramsTable.addChangeListener { updateComputedUrl() }
     }
@@ -144,6 +163,12 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
 
         gbc.gridx = 5; gbc.insets = Insets(0, 0, 0, 4)
         bar.add(setDefaultButton, gbc)
+
+        gbc.gridx = 6; gbc.insets = Insets(0, 0, 0, 4)
+        bar.add(preScriptButton, gbc)
+
+        gbc.gridx = 7; gbc.insets = Insets(0, 0, 0, 0)
+        bar.add(postScriptButton, gbc)
 
         return bar
     }
@@ -308,6 +333,15 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         computedUrlField.foreground = if (resolved.contains("{{"))
             JBColor(java.awt.Color(0xCC, 0x33, 0x00), java.awt.Color(0xFF, 0x66, 0x44))
         else JBColor.GRAY
+    }
+
+    private fun openOrCreateScript(phase: ScriptPhase) {
+        val endpoint = currentEndpoint ?: return
+        val request  = currentRequest ?: SavedRequest(name = currentRequestName)
+        val scriptService = SonarwhaleScriptService.getInstance(project)
+        val path = scriptService.getOrCreateScript(endpoint, request, phase, ScriptLevel.REQUEST)
+        val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return
+        FileEditorManager.getInstance(project).openFile(vf, true)
     }
 
     private fun setAsDefault() {
