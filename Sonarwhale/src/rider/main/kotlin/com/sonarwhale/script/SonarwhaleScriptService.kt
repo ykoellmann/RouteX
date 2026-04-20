@@ -1,5 +1,6 @@
 package com.sonarwhale.script
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -125,10 +126,12 @@ class SonarwhaleScriptService(private val project: Project) {
         Path.of(project.basePath ?: ".").resolve(".sonarwhale").resolve("scripts")
 
     private fun flushEnvChanges(snapshot: MutableMap<String, String>) {
-        val stateService = SonarwhaleStateService.getInstance(project)
-        val env = stateService.getActiveEnvironment() ?: return
-        val updated = env.copy(variables = LinkedHashMap(snapshot))
-        stateService.upsertEnvironment(updated)
+        val copy = LinkedHashMap(snapshot) // capture before background/EDT handoff
+        ApplicationManager.getApplication().invokeLater {
+            val stateService = SonarwhaleStateService.getInstance(project)
+            val env = stateService.getActiveEnvironment() ?: return@invokeLater
+            stateService.upsertEnvironment(env.copy(variables = copy))
+        }
     }
 
     companion object {

@@ -44,7 +44,8 @@ class ScriptChainResolver(private val scriptsRoot: Path) {
             Level(scriptsRoot.resolve(tagDirName).resolve(endpointDirName).resolve(requestDirName), ScriptLevel.REQUEST)
         )
 
-        // Find the deepest inherit.off in the hierarchy — include only that level and below
+        // Deepest inherit.off wins (more specific level takes precedence over broader parent).
+        // E.g. inherit.off at ENDPOINT level excludes GLOBAL+TAG even if TAG also has inherit.off.
         val deepestInheritOff = levels.indexOfLast { it.dir.resolve("inherit.off").exists() }
 
         val includedLevels = if (deepestInheritOff == -1) {

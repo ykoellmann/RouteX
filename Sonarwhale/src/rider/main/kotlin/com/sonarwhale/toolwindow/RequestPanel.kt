@@ -3,6 +3,8 @@ package com.sonarwhale.toolwindow
 import com.google.gson.reflect.TypeToken
 import com.google.gson.Gson
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
@@ -339,9 +341,15 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         val endpoint = currentEndpoint ?: return
         val request  = currentRequest ?: SavedRequest(name = currentRequestName)
         val scriptService = SonarwhaleScriptService.getInstance(project)
-        val path = scriptService.getOrCreateScript(endpoint, request, phase, ScriptLevel.REQUEST)
-        val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return
-        FileEditorManager.getInstance(project).openFile(vf, true)
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Creating script…", false) {
+            override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
+                val path = scriptService.getOrCreateScript(endpoint, request, phase, ScriptLevel.REQUEST)
+                val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return
+                com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                    FileEditorManager.getInstance(project).openFile(vf, true)
+                }
+            }
+        })
     }
 
     private fun setAsDefault() {
@@ -451,9 +459,8 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                         else          -> builder.method(endpoint.method.name, HttpRequest.BodyPublishers.noBody())
                     }
                     is BodyContent.Raw -> {
-                        val body = finalBody.ifEmpty { bc.text }
                         if (!hasContentType) builder.header("Content-Type", bc.contentType)
-                        val publisher = HttpRequest.BodyPublishers.ofString(body)
+                        val publisher = HttpRequest.BodyPublishers.ofString(finalBody)
                         when (endpoint.method.name) {
                             "POST"        -> builder.POST(publisher)
                             "PUT"         -> builder.PUT(publisher)
