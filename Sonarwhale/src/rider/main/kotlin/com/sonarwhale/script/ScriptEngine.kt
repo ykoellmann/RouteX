@@ -1,0 +1,236 @@
+package com.sonarwhale.script
+
+import org.mozilla.javascript.Context
+import org.mozilla.javascript.Function
+import org.mozilla.javascript.NativeObject
+import org.mozilla.javascript.Scriptable
+import org.mozilla.javascript.ScriptableObject
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
+import kotlin.io.path.name
+import kotlin.io.path.readText
+
+/**
+ * Executes a list of [ScriptFile]s in order using Mozilla Rhino.
+ * All scripts in a chain share the same [ScriptContext] — mutations accumulate.
+ */
+class ScriptEngine {
+
+    fun executeChain(scripts: List<ScriptFile>, context: ScriptContext) {
+        if (scripts.isEmpty()) return
+
+        val cx = Context.enter()
+        cx.optimizationLevel = -1 // interpreted mode — no class generation issues
+        cx.languageVersion = Context.VERSION_ES6
+        try {
+            val scope = cx.initStandardObjects()
+            val swObj = buildSwObject(cx, scope, context)
+            ScriptableObject.putProperty(scope, "sw", swObj)
+
+            for (script in scripts) {
+                runCatching {
+                    val code = script.path.readText()
+                    cx.evaluateString(scope, code, script.path.name, 1, null)
+                }.onFailure { e ->
+                    context.testResults.add(
+                        TestResult(
+                            name = "Script error in ${script.path.name}",
+                            passed = false,
+                            error = e.message ?: e.javaClass.simpleName
+                        )
+                    )
+                }
+            }
+        } finally {
+            Context.exit()
+        }
+    }
+
+    private fun buildSwObject(cx: Context, scope: Scriptable, context: ScriptContext): NativeObject {
+        val sw = NativeObject()
+
+        // ── sw.env ───────────────────────────────────────────────────────────
+        val env = NativeObject()
+        env.put("get", env, rhinoFn { _, _, args ->
+            val key = args.getOrNull(0)?.toString() ?: return@rhinoFn null
+            context.envSnapshot[key]
+        })
+        env.put("set", env, rhinoFn { _, _, args ->
+            val key = args.getOrNull(0)?.toString() ?: return@rhinoFn null
+            val value = args.getOrNull(1)?.toString() ?: ""
+            context.envSnapshot[key] = value
+            null
+        })
+        sw.put("env", sw, env)
+
+        // ── sw.request ───────────────────────────────────────────────────────
+        val req = NativeObject()
+        req.put("url", req, context.request.url)
+        req.put("method", req, context.request.method)
+        req.put("body", req, context.request.body)
+        val headersObj = NativeObject()
+        context.request.headers.forEach { (k, v) -> headersObj.put(k, headersObj, v) }
+        req.put("headers", req, headersObj)
+        req.put("setHeader", req, rhinoFn { _, _, args ->
+            val key   = args.getOrNull(0)?.toString() ?: return@rhinoFn null
+            val value = args.getOrNull(1)?.toString() ?: ""
+            context.request.headers[key] = value
+            null
+        })
+        req.put("setBody", req, rhinoFn { _, _, args ->
+            context.request.body = args.getOrNull(0)?.toString() ?: ""
+            null
+        })
+        req.put("setUrl", req, rhinoFn { _, _, args ->
+            context.request.url = args.getOrNull(0)?.toString() ?: ""
+            null
+        })
+        sw.put("request", sw, req)
+
+        // ── sw.response ──────────────────────────────────────────────────────
+        context.response?.let { resp ->
+            val res = NativeObject()
+            res.put("status", res, resp.status)
+            res.put("body", res, resp.body)
+            val respHeaders = NativeObject()
+            resp.headers.forEach { (k, v) -> respHeaders.put(k, respHeaders, v) }
+            res.put("headers", res, respHeaders)
+            res.put("json", res, rhinoFn { c, s, _ ->
+                runCatching { c.evaluateString(s, "(${resp.body})", "json-parse", 1, null) }
+                    .getOrDefault(null)
+            })
+            sw.put("response", sw, res)
+        }
+
+        // ── sw.http ──────────────────────────────────────────────────────────
+        val http = NativeObject()
+        http.put("get", http, rhinoFn { c, s, args ->
+            val url     = args.getOrNull(0)?.toString() ?: return@rhinoFn null
+            val headers = (args.getOrNull(1) as? NativeObject)?.toHeaderMap() ?: emptyMap()
+            makeHttpCall(c, s, "GET", url, null, headers)
+        })
+        http.put("post", http, rhinoFn { c, s, args ->
+            val url     = args.getOrNull(0)?.toString() ?: return@rhinoFn null
+            val body    = args.getOrNull(1)?.toString() ?: ""
+            val headers = (args.getOrNull(2) as? NativeObject)?.toHeaderMap() ?: emptyMap()
+            makeHttpCall(c, s, "POST", url, body, headers)
+        })
+        http.put("request", http, rhinoFn { c, s, args ->
+            val method  = args.getOrNull(0)?.toString()?.uppercase() ?: "GET"
+            val url     = args.getOrNull(1)?.toString() ?: return@rhinoFn null
+            val body    = args.getOrNull(2)?.toString()
+            val headers = (args.getOrNull(3) as? NativeObject)?.toHeaderMap() ?: emptyMap()
+            makeHttpCall(c, s, method, url, body, headers)
+        })
+        sw.put("http", sw, http)
+
+        // ── sw.test ──────────────────────────────────────────────────────────
+        sw.put("test", sw, rhinoFn { c, s, args ->
+            val name = args.getOrNull(0)?.toString() ?: "unnamed"
+            val fn   = args.getOrNull(1) as? Function
+            val result = if (fn == null) {
+                TestResult(name, false, "test() requires a function as second argument")
+            } else {
+                runCatching { fn.call(c, s, s, emptyArray()) }
+                    .fold(
+                        onSuccess = { TestResult(name, true, null) },
+                        onFailure = { e -> TestResult(name, false, e.message ?: e.javaClass.simpleName) }
+                    )
+            }
+            context.testResults.add(result)
+            null
+        })
+
+        // ── sw.expect ────────────────────────────────────────────────────────
+        sw.put("expect", sw, rhinoFn { _, _, args ->
+            val actual = args.getOrNull(0)
+            buildExpectObject(actual, context)
+        })
+
+        return sw
+    }
+
+    private fun buildExpectObject(actual: Any?, context: ScriptContext): NativeObject {
+        val expect = NativeObject()
+        expect.put("toBe", expect, rhinoFn { _, _, args ->
+            val expected = args.getOrNull(0)
+            val passed = actual == expected
+            context.testResults.add(TestResult("expect.toBe", passed, if (passed) null else "Expected $expected but got $actual"))
+            null
+        })
+        expect.put("toEqual", expect, rhinoFn { _, _, args ->
+            val expected = args.getOrNull(0)?.toString()
+            val passed = actual?.toString() == expected
+            context.testResults.add(TestResult("expect.toEqual", passed, if (passed) null else "Expected $expected but got $actual"))
+            null
+        })
+        expect.put("toBeTruthy", expect, rhinoFn { _, _, _ ->
+            val passed = actual != null && actual != false && actual.toString() != "false" && actual.toString() != "0"
+            context.testResults.add(TestResult("expect.toBeTruthy", passed, if (passed) null else "Expected truthy but got $actual"))
+            null
+        })
+        expect.put("toBeFalsy", expect, rhinoFn { _, _, _ ->
+            val passed = actual == null || actual == false || actual.toString() == "false" || actual.toString() == "0"
+            context.testResults.add(TestResult("expect.toBeFalsy", passed, if (passed) null else "Expected falsy but got $actual"))
+            null
+        })
+        expect.put("toContain", expect, rhinoFn { _, _, args ->
+            val substr = args.getOrNull(0)?.toString() ?: ""
+            val passed = actual?.toString()?.contains(substr) == true
+            context.testResults.add(TestResult("expect.toContain", passed, if (passed) null else "Expected $actual to contain '$substr'"))
+            null
+        })
+        return expect
+    }
+
+    private fun makeHttpCall(
+        cx: Context,
+        scope: Scriptable,
+        method: String,
+        url: String,
+        body: String?,
+        headers: Map<String, String>
+    ): NativeObject? {
+        return runCatching {
+            val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+            val builder = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(30))
+            headers.forEach { (k, v) -> runCatching { builder.header(k, v) } }
+            val publisher = if (body != null)
+                HttpRequest.BodyPublishers.ofString(body)
+            else
+                HttpRequest.BodyPublishers.noBody()
+            builder.method(method, publisher)
+            val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+
+            val resObj = NativeObject()
+            resObj.put("status", resObj, response.statusCode())
+            resObj.put("body", resObj, response.body())
+            val respHeaders = NativeObject()
+            response.headers().map().forEach { (k, vs) ->
+                if (vs.isNotEmpty()) respHeaders.put(k, respHeaders, vs[0])
+            }
+            resObj.put("headers", resObj, respHeaders)
+            resObj.put("json", resObj, rhinoFn { c, s, _ ->
+                runCatching { c.evaluateString(s, "(${response.body()})", "json-parse", 1, null) }
+                    .getOrDefault(null)
+            })
+            resObj
+        }.getOrNull()
+    }
+
+    /** Convenience: create a Rhino callable from a Kotlin lambda. */
+    private fun rhinoFn(block: (cx: Context, scope: Scriptable, args: Array<out Any?>) -> Any?): org.mozilla.javascript.BaseFunction {
+        return object : org.mozilla.javascript.BaseFunction() {
+            override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable?, args: Array<out Any?>): Any? =
+                block(cx, scope, args)
+        }
+    }
+}
+
+private fun NativeObject.toHeaderMap(): Map<String, String> =
+    ids.filterIsInstance<String>().associateWith { get(it, this)?.toString() ?: "" }
