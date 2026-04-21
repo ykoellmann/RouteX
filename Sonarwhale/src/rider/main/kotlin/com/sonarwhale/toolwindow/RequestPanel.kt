@@ -8,7 +8,6 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.sonarwhale.SonarwhaleStateService
@@ -75,10 +74,6 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     // URL bar
-    private val baseUrlField = JTextField(stateService.baseUrl).apply {
-        font = Font(Font.MONOSPACED, Font.PLAIN, 12)
-        toolTipText = "Base URL — saved per project"
-    }
     private val computedUrlField = JTextField().apply {
         isEditable = false
         foreground = JBColor.GRAY
@@ -133,7 +128,6 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         setDefaultButton.addActionListener { setAsDefault() }
         preScriptButton.addActionListener  { openOrCreateScript(ScriptPhase.PRE) }
         postScriptButton.addActionListener { openOrCreateScript(ScriptPhase.POST) }
-        baseUrlField.document.addDocumentListener(recomputeListener)
         paramsTable.addChangeListener { updateComputedUrl() }
     }
 
@@ -146,32 +140,25 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun buildUrlBar(): JPanel {
         val bar = JPanel(GridBagLayout())
-
         val gbc = GridBagConstraints()
         gbc.gridy = 0; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.anchor = GridBagConstraints.WEST
 
-        gbc.gridx = 0; gbc.weightx = 0.0; gbc.insets = Insets(0, 0, 0, 4)
-        bar.add(JBLabel("Base URL").also { it.foreground = JBColor.GRAY; it.font = it.font.deriveFont(10f) }, gbc)
-
-        gbc.gridx = 1; gbc.weightx = 0.26; gbc.insets = Insets(0, 0, 0, 4)
-        bar.add(baseUrlField, gbc)
-
-        gbc.gridx = 2; gbc.weightx = 0.74; gbc.insets = Insets(0, 0, 0, 6)
+        gbc.gridx = 0; gbc.weightx = 1.0; gbc.insets = Insets(0, 0, 0, 6)
         bar.add(computedUrlField, gbc)
 
-        gbc.gridx = 3; gbc.weightx = 0.0; gbc.insets = Insets(0, 0, 0, 4)
+        gbc.gridx = 1; gbc.weightx = 0.0; gbc.insets = Insets(0, 0, 0, 4)
         bar.add(sendButton, gbc)
 
-        gbc.gridx = 4; gbc.insets = Insets(0, 0, 0, 4)
+        gbc.gridx = 2; gbc.insets = Insets(0, 0, 0, 4)
         bar.add(saveButton, gbc)
 
-        gbc.gridx = 5; gbc.insets = Insets(0, 0, 0, 4)
+        gbc.gridx = 3; gbc.insets = Insets(0, 0, 0, 4)
         bar.add(setDefaultButton, gbc)
 
-        gbc.gridx = 6; gbc.insets = Insets(0, 0, 0, 4)
+        gbc.gridx = 4; gbc.insets = Insets(0, 0, 0, 4)
         bar.add(preScriptButton, gbc)
 
-        gbc.gridx = 7; gbc.insets = Insets(0, 0, 0, 0)
+        gbc.gridx = 5; gbc.insets = Insets(0, 0, 0, 0)
         bar.add(postScriptButton, gbc)
 
         return bar
@@ -308,10 +295,8 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun updateComputedUrl() {
-        stateService.baseUrl = baseUrlField.text
-
         val endpoint = currentEndpoint ?: run { computedUrlField.text = ""; return }
-        val base = baseUrlField.text.trimEnd('/')
+        val base = stateService.getActiveEnvironment()?.variables?.get("baseUrl")?.trimEnd('/') ?: ""
         var route = endpoint.path
 
         val paramRows = paramsTable.getRows()
@@ -333,7 +318,6 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         val assembled = base + route + if (query.isEmpty()) "" else "?" + query.joinToString("&")
         val resolved = stateService.resolveVariables(assembled)
         computedUrlField.text = resolved
-        // Highlight unresolved variables in red so the user notices missing env vars
         computedUrlField.foreground = if (resolved.contains("{{"))
             JBColor(java.awt.Color(0xCC, 0x33, 0x00), java.awt.Color(0xFF, 0x66, 0x44))
         else JBColor.GRAY
