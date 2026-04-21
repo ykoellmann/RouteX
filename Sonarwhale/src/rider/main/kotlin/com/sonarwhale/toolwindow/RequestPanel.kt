@@ -457,7 +457,18 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                 val hasContentType = finalHeaders.keys.any { it.equals("content-type", ignoreCase = true) }
 
                 when (val bc = bodyContent) {
-                    is BodyContent.None -> when (endpoint.method.name) {
+                    is BodyContent.None -> if (finalBody.isNotEmpty()) {
+                        // Pre-script injected a body — send it even though the body panel is empty
+                        if (!hasContentType) builder.header("Content-Type", "application/json")
+                        val publisher = HttpRequest.BodyPublishers.ofString(finalBody)
+                        when (endpoint.method.name) {
+                            "POST"        -> builder.POST(publisher)
+                            "PUT"         -> builder.PUT(publisher)
+                            "DELETE"      -> builder.DELETE()
+                            "GET", "HEAD" -> builder.GET()
+                            else          -> builder.method(endpoint.method.name, publisher)
+                        }
+                    } else when (endpoint.method.name) {
                         "GET", "HEAD" -> builder.GET()
                         "DELETE"      -> builder.DELETE()
                         else          -> builder.method(endpoint.method.name, HttpRequest.BodyPublishers.noBody())
