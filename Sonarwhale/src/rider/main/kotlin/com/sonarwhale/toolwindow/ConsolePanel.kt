@@ -10,25 +10,25 @@ import com.sonarwhale.script.ScriptPhase
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Font
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
 import java.text.SimpleDateFormat
 import java.util.Date
-import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
-import javax.swing.JTextArea
 import javax.swing.SwingUtilities
+import javax.swing.text.SimpleAttributeSet
+import javax.swing.text.StyleConstants
 
 class ConsolePanel : JPanel(BorderLayout()) {
 
-    private val contentPanel = JPanel().also {
-        it.layout = BoxLayout(it, BoxLayout.Y_AXIS)
-        it.border = JBUI.Borders.empty(4)
+    private val textPane = javax.swing.JTextPane().apply {
+        isEditable = false
+        background = JBColor.background()
+        border = JBUI.Borders.empty(4)
     }
-    private val scroll = JBScrollPane(contentPanel)
+    private val scroll = JBScrollPane(textPane)
     private val clearButton = JButton("Clear").apply { font = font.deriveFont(10f) }
     private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS")
+    private val doc get() = textPane.styledDocument
 
     init {
         val header = JPanel(BorderLayout(4, 0))
@@ -48,34 +48,27 @@ class ConsolePanel : JPanel(BorderLayout()) {
     }
 
     fun showEntries(entries: List<ConsoleEntry>) {
-        contentPanel.removeAll()
-        for (entry in entries) {
-            contentPanel.add(buildRow(entry))
-        }
-        contentPanel.revalidate()
-        contentPanel.repaint()
+        doc.remove(0, doc.length)
+        entries.forEach { appendEntry(it) }
         SwingUtilities.invokeLater {
-            val vb = scroll.verticalScrollBar
-            vb.value = vb.maximum
+            scroll.verticalScrollBar.let { it.value = it.maximum }
         }
     }
 
-    private fun buildRow(entry: ConsoleEntry): java.awt.Component = when (entry) {
-        is ConsoleEntry.ScriptBoundary -> buildBoundaryRow(entry)
-        is ConsoleEntry.LogEntry       -> buildLogRow(entry)
-        is ConsoleEntry.ErrorEntry     -> buildErrorRow(entry)
-        is ConsoleEntry.HttpEntry      -> buildHttpRow(entry)
+    private fun appendEntry(entry: ConsoleEntry) = when (entry) {
+        is ConsoleEntry.ScriptBoundary -> appendBoundary(entry)
+        is ConsoleEntry.LogEntry       -> appendLog(entry)
+        is ConsoleEntry.ErrorEntry     -> appendError(entry)
+        is ConsoleEntry.HttpEntry      -> appendHttp(entry)
     }
 
-    // ── Row builders ──────────────────────────────────────────────────────────
-
-    private fun buildBoundaryRow(entry: ConsoleEntry.ScriptBoundary): JTextArea {
+    private fun appendBoundary(entry: ConsoleEntry.ScriptBoundary) {
         val phase = if (entry.phase == ScriptPhase.PRE) "pre" else "post"
-        val name  = entry.scriptPath.substringAfterLast('/').substringAfterLast('\\')
-        return textRow("▶  $name [$phase]", JBColor.GRAY, italic = true)
+        val name = entry.scriptPath.substringAfterLast('/').substringAfterLast('\\')
+        insert("▶  $name [$phase]\n", fg = JBColor.GRAY, italic = true)
     }
 
-    private fun buildLogRow(entry: ConsoleEntry.LogEntry): JTextArea {
+    private fun appendLog(entry: ConsoleEntry.LogEntry) {
         val color = when (entry.level) {
             LogLevel.LOG   -> JBColor.foreground()
             LogLevel.WARN  -> JBColor(Color(0xCC, 0x77, 0x00), Color(0xFF, 0xBB, 0x33))
@@ -87,23 +80,19 @@ class ConsolePanel : JPanel(BorderLayout()) {
             LogLevel.ERROR -> "✕  "
         }
         val time = timeFmt.format(Date(entry.timestampMs))
-        return textRow("$time  $prefix${entry.message}", color)
+        insert("$time  $prefix${entry.message}\n", fg = color)
     }
 
-    private fun buildErrorRow(entry: ConsoleEntry.ErrorEntry): JTextArea {
+    private fun appendError(entry: ConsoleEntry.ErrorEntry) {
         val name = entry.scriptPath.substringAfterLast('/').substringAfterLast('\\')
-        return textRow("✕  $name: ${entry.message}",
-            JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x55, 0x55))).also {
-            it.background = JBColor(Color(0xFF, 0xEE, 0xEE), Color(0x55, 0x22, 0x22))
-            it.isOpaque = true
-        }
+        insert(
+            "✕  $name: ${entry.message}\n",
+            fg = JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x55, 0x55)),
+            bg = JBColor(Color(0xFF, 0xEE, 0xEE), Color(0x55, 0x22, 0x22))
+        )
     }
 
-    private fun buildHttpRow(entry: ConsoleEntry.HttpEntry): JPanel {
-        val container = JPanel()
-        container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
-        container.isOpaque = false
-
+    private fun appendHttp(entry: ConsoleEntry.HttpEntry) {
         val statusColor = when {
             entry.status in 200..299 -> JBColor(Color(0x00, 0xAA, 0x55), Color(0x44, 0xCC, 0x77))
             entry.status == 0        -> JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x44, 0x44))
@@ -111,80 +100,47 @@ class ConsolePanel : JPanel(BorderLayout()) {
             else                     -> JBColor(Color(0xCC, 0x77, 0x00), Color(0xFF, 0xBB, 0x33))
         }
         val statusText = if (entry.status == 0) "ERROR" else "${entry.status}"
-        val summary = textRow(
-            "→  ${entry.method}  ${entry.url}  ·  $statusText  ·  ${entry.durationMs}ms",
-            statusColor
+        insert(
+            "→  ${entry.method}  ${entry.url}  ·  $statusText  ·  ${entry.durationMs}ms\n",
+            fg = statusColor, bold = true
         )
 
-        val details = buildHttpDetails(entry)
-        details.isVisible = false
-
-        summary.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-        summary.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                details.isVisible = !details.isVisible
-                container.revalidate()
-                container.repaint()
-            }
-        })
-
-        container.add(summary)
-        container.add(details)
-        return container
-    }
-
-    private fun buildHttpDetails(entry: ConsoleEntry.HttpEntry): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-        panel.border = JBUI.Borders.emptyLeft(16)
-        panel.isOpaque = false
-
+        val indent = "   "
         fun section(title: String, content: String) {
             if (content.isBlank()) return
-            panel.add(JBLabel(title).apply {
-                font = font.deriveFont(Font.BOLD, 10f)
-                foreground = JBColor.GRAY
-                border = JBUI.Borders.emptyTop(4)
-            })
-            val area = JTextArea(content).apply {
-                isEditable = false
-                font = Font(Font.MONOSPACED, Font.PLAIN, 11)
-                lineWrap = true
-                wrapStyleWord = false
-                border = JBUI.Borders.empty(2, 4)
-                background = JBColor.background()
-            }
-            panel.add(area)
+            insert("$indent$title\n", fg = JBColor.GRAY, bold = true, size = 10)
+            insert(content.lines().joinToString("\n") { "$indent$it" } + "\n", fg = JBColor.foreground())
         }
 
         val reqHeadersText = entry.requestHeaders.entries.joinToString("\n") { "${it.key}: ${it.value}" }
-        section("Request Headers", reqHeadersText)
-        section("Request Body", entry.requestBody ?: "")
+        section("REQUEST HEADERS", reqHeadersText)
+        if (entry.requestBody != null) section("REQUEST BODY", entry.requestBody)
 
         if (entry.error != null) {
-            section("Error", entry.error)
+            section("ERROR", entry.error)
         } else {
             val respHeadersText = entry.responseHeaders.entries.joinToString("\n") { "${it.key}: ${it.value}" }
-            section("Response Headers", respHeadersText)
-            section("Response Body", entry.responseBody.take(2000))
+            section("RESPONSE HEADERS", respHeadersText)
+            if (entry.responseBody.isNotBlank()) section("RESPONSE BODY", entry.responseBody.take(2000))
         }
-
-        return panel
+        insert("\n", fg = JBColor.foreground())
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private fun textRow(text: String, fg: java.awt.Color, italic: Boolean = false): JTextArea =
-        JTextArea(text).apply {
-            isEditable    = false
-            isOpaque      = false
-            lineWrap      = true
-            wrapStyleWord = true
-            foreground    = fg
-            font          = if (italic)
-                Font(Font.MONOSPACED, Font.ITALIC, 11)
-            else
-                Font(Font.MONOSPACED, Font.PLAIN, 11)
-            border        = JBUI.Borders.empty(1, 4)
-        }
+    private fun insert(
+        text: String,
+        fg: Color,
+        bg: Color? = null,
+        italic: Boolean = false,
+        bold: Boolean = false,
+        size: Int = 11
+    ) {
+        val attrs = SimpleAttributeSet()
+        StyleConstants.setForeground(attrs, fg)
+        StyleConstants.setFontFamily(attrs, Font.MONOSPACED)
+        StyleConstants.setFontSize(attrs, size)
+        StyleConstants.setItalic(attrs, italic)
+        StyleConstants.setBold(attrs, bold)
+        if (bg != null) StyleConstants.setBackground(attrs, bg)
+        doc.insertString(doc.length, text, attrs)
+    }
 }
