@@ -8,7 +8,6 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
-import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.sonarwhale.SonarwhaleStateService
 import com.sonarwhale.model.ApiEndpoint
@@ -95,7 +94,7 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val actionButtons: List<JComponent> = listOf(sendButton, saveButton, setDefaultButton)
 
-    private val tabs = JBTabbedPane()
+    private val tabs = CollapsibleTabPane()
 
     var onResponseReceived: ((Int, String, Long) -> Unit)? = null
     /** Called after a successful save — use to refresh the tree. */

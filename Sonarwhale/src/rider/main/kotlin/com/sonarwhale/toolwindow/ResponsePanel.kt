@@ -8,7 +8,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.sonarwhale.script.ConsoleEntry
 import com.sonarwhale.script.TestResult
@@ -40,18 +39,30 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
         isVisible = false
         toolTipText = "Open response in a new editor tab with JSON highlighting"
     }
+    private val collapseButton = JButton("▼").apply {
+        font = font.deriveFont(10f)
+        isBorderPainted = false
+        isContentAreaFilled = false
+        toolTipText = "Collapse response panel"
+        isFocusable = false
+    }
     private val bodyArea = JTextArea().apply {
         isEditable = false
         font = Font(Font.MONOSPACED, Font.PLAIN, 12)
         border = JBUI.Borders.empty(8)
     }
-    private val tabs = JBTabbedPane()
+    private val bodyScroll = JBScrollPane(bodyArea)
+    private val tabs = CollapsibleTabPane()
     private val testsPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         border = JBUI.Borders.empty(8)
     }
     private val testsScroll = JBScrollPane(testsPanel)
     private val consolePanel = ConsolePanel()
+
+    var onToggle: (() -> Unit)? = null
+    var isContentVisible: Boolean = true
+        private set
 
     init {
         val header = JPanel(GridBagLayout())
@@ -76,13 +87,25 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
         gbc.gridx = 3; gbc.insets = Insets(0, 0, 0, 0)
         header.add(openButton, gbc)
 
+        gbc.gridx = 4; gbc.insets = Insets(0, 4, 0, 0)
+        header.add(collapseButton, gbc)
+
         add(header, BorderLayout.NORTH)
-        tabs.addTab("Body", JBScrollPane(bodyArea))
+        tabs.addTab("Body", bodyScroll)
         tabs.addTab("Tests", testsScroll)
         tabs.addTab("Console", consolePanel)
         add(tabs, BorderLayout.CENTER)
 
         openButton.addActionListener { openInEditor() }
+        collapseButton.addActionListener {
+            isContentVisible = !isContentVisible
+            tabs.isVisible = isContentVisible
+            collapseButton.text = if (isContentVisible) "▼" else "▲"
+            collapseButton.toolTipText = if (isContentVisible) "Collapse response panel" else "Expand response panel"
+            minimumSize = if (isContentVisible) null else java.awt.Dimension(0, 36)
+            revalidate(); repaint()
+            onToggle?.invoke()
+        }
     }
 
     fun showResponse(statusCode: Int, body: String, durationMs: Long) {

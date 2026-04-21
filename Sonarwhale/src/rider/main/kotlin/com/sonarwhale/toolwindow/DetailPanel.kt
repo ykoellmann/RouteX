@@ -41,6 +41,8 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()) {
         it.secondComponent = responsePanel
     }
 
+    private var expandedProportion = 0.58f
+
     private val cardLayout      = CardLayout()
     private val controllerPanel = JPanel(BorderLayout())
     private val folderCardHolder = JPanel(BorderLayout())
@@ -61,6 +63,14 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()) {
             responsePanel.showTestResults(results)
         }
         requestPanel.onConsoleReceived = { entries -> responsePanel.showConsole(entries) }
+        responsePanel.onToggle = {
+            if (!responsePanel.isContentVisible) {
+                expandedProportion = splitter.proportion
+                splitter.proportion = 1.0f
+            } else {
+                splitter.proportion = expandedProportion
+            }
+        }
         add(headerHolder, BorderLayout.NORTH)
         add(cardPanel,    BorderLayout.CENTER)
         cardLayout.show(cardPanel, "empty")
