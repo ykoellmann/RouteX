@@ -38,7 +38,7 @@
     <!-- Project-level service: manages environments and OpenAPI cache -->
     <projectService serviceImplementation="com.sonarwhale.service.EnvironmentService"/>
 
-    <!-- Project-level service: persists base URL, saved requests, and param values -->
+    <!-- Project-level service: persists saved requests and environment variables -->
     <projectService serviceImplementation="com.sonarwhale.SonarwhaleStateService"/>
 
     <!-- Project-level service: renders gutter play-icons on C# endpoint methods -->

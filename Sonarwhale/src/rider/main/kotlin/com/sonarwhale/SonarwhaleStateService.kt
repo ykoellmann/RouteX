@@ -19,7 +19,6 @@ class SonarwhaleStateService(@Suppress("UNUSED_PARAMETER") project: Project) : P
      * JSON strings and parsed on demand.
      */
     class State {
-        @JvmField var baseUrl: String = "http://localhost:5000"
         // endpointId → JSON array of SavedRequest
         @JvmField var savedRequests: LinkedHashMap<String, String> = LinkedHashMap()
         // JSON array of Environment
@@ -33,16 +32,11 @@ class SonarwhaleStateService(@Suppress("UNUSED_PARAMETER") project: Project) : P
     override fun getState(): State = myState
 
     override fun loadState(state: State) {
-        myState.baseUrl = state.baseUrl
         myState.savedRequests.clear()
         myState.savedRequests.putAll(state.savedRequests)
         myState.environments = state.environments
         myState.activeEnvironmentId = state.activeEnvironmentId
     }
-
-    var baseUrl: String
-        get() = myState.baseUrl
-        set(v) { myState.baseUrl = v }
 
     // ── Read ───────────────────────────────────────────────────────────────────
 
