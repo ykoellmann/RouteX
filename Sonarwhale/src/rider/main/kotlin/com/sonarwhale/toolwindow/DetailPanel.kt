@@ -127,8 +127,7 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()) {
     private fun showFolderPanel(level: ScriptLevel, tag: String? = null) {
         headerHolder.isVisible = false
         folderCardHolder.removeAll()
-        folderCardHolder.add(FolderScriptsPanel(project, level, tag,
-            onRefresh = { showFolderPanel(level, tag) }), BorderLayout.CENTER)
+        // TODO (Task 17): replace with GlobalDetailPanel / ControllerDetailPanel
         folderCardHolder.revalidate()
         folderCardHolder.repaint()
         cardLayout.show(cardPanel, "folder")
