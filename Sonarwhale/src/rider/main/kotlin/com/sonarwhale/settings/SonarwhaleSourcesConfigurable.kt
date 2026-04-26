@@ -9,9 +9,10 @@ import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.util.ui.JBUI
+import com.sonarwhale.model.ApiCollection
+import com.sonarwhale.model.CollectionEnvironment
 import com.sonarwhale.model.EnvironmentSource
-import com.sonarwhale.model.SonarwhaleEnvironment
-import com.sonarwhale.service.EnvironmentService
+import com.sonarwhale.service.CollectionService
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Font
@@ -34,9 +35,10 @@ import javax.swing.SpinnerNumberModel
 
 class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable {
 
-    private val service: EnvironmentService get() = EnvironmentService.getInstance(project)
+    private val service: CollectionService get() = CollectionService.getInstance(project)
 
-    private var envs: MutableList<SonarwhaleEnvironment> = mutableListOf()
+    // Work with the first collection's environments as a flat list (Task 20 will redo this UI)
+    private var envs: MutableList<CollectionEnvironment> = mutableListOf()
     private var modified = false
 
     private val listModel = DefaultListModel<String>()
@@ -103,22 +105,19 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
 
     override fun apply() {
         saveCurrentToEnv()
-        val newIds = envs.map { it.id }.toSet()
-        service.getAll().filter { it.id !in newIds }.forEach { service.remove(it.id) }
-        val activeId = service.getActive()?.id
-        envs.forEach { env ->
-            val existing = service.getAll().firstOrNull { it.id == env.id }
-            val withActive = env.copy(isActive = env.id == activeId ||
-                (activeId == null && existing == null && env == envs.first()))
-            if (existing == null) service.add(withActive) else service.update(withActive)
+        // Persist the flat environment list back into the first collection (Task 20 will redo this)
+        val col = service.getAll().firstOrNull()
+        if (col != null) {
+            service.update(col.copy(environments = envs.toList()))
+        } else {
+            service.add(ApiCollection(name = "My API", environments = envs.toList(),
+                activeEnvironmentId = envs.firstOrNull()?.id))
         }
-        if (service.getActive() == null && service.getAll().isNotEmpty())
-            service.setActive(service.getAll().first().id)
         modified = false
     }
 
     override fun reset() {
-        envs = service.getAll().toMutableList()
+        envs = (service.getAll().firstOrNull()?.environments ?: emptyList()).toMutableList()
         listModel.clear()
         envs.forEach { listModel.addElement(it.name) }
         selectedIdx = -1
@@ -142,7 +141,7 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
                 )?.trim() ?: return@setAddAction
                 if (name.isEmpty()) return@setAddAction
                 saveCurrentToEnv()
-                val env = SonarwhaleEnvironment(
+                val env = CollectionEnvironment(
                     id = UUID.randomUUID().toString(), name = name,
                     source = EnvironmentSource.ServerUrl(host = "http://localhost", port = 5000)
                 )

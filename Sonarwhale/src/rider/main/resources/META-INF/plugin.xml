@@ -35,8 +35,14 @@
     <!-- Project-level service: holds the endpoint list, triggers OpenAPI fetches -->
     <projectService serviceImplementation="com.sonarwhale.service.RouteIndexService"/>
 
-    <!-- Project-level service: manages environments and OpenAPI cache -->
-    <projectService serviceImplementation="com.sonarwhale.service.EnvironmentService"/>
+    <!-- Project-level service: manages collections (replaces EnvironmentService) -->
+    <projectService serviceImplementation="com.sonarwhale.service.CollectionService"/>
+
+    <!-- Project-level service: resolves {{variable}} placeholders in URLs/headers -->
+    <projectService serviceImplementation="com.sonarwhale.service.VariableResolver"/>
+
+    <!-- Project-level service: resolves auth config for requests -->
+    <projectService serviceImplementation="com.sonarwhale.service.AuthResolver"/>
 
     <!-- Project-level service: persists saved requests and environment variables -->
     <projectService serviceImplementation="com.sonarwhale.SonarwhaleStateService"/>

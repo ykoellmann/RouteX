@@ -16,7 +16,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.sonarwhale.model.ApiEndpoint
 import com.sonarwhale.SonarwhaleStateService
-import com.sonarwhale.service.EnvironmentService
+import com.sonarwhale.service.CollectionService
 import com.sonarwhale.service.RouteIndexService
 import java.awt.BorderLayout
 import java.awt.FlowLayout
@@ -124,15 +124,15 @@ class SonarwhalePanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun buildEnvPanel(): JPanel {
-        val envService = EnvironmentService.getInstance(project)
+        val collectionService = CollectionService.getInstance(project)
 
         envCombo.addActionListener {
             if (suppressEnvComboListener) return@addActionListener
             val idx = envCombo.selectedIndex
-            val envs = envService.getAll()
-            val selected = envs.getOrNull(idx)
+            val col = collectionService.getAll().firstOrNull() ?: return@addActionListener
+            val selected = col.environments.getOrNull(idx)
             if (selected != null) {
-                envService.setActive(selected.id)
+                collectionService.setActiveEnvironment(col.id, selected.id)
                 RouteIndexService.getInstance(project).refresh()
                 detailPanel.requestPanel.refreshEnvironment()
             }
@@ -160,9 +160,10 @@ class SonarwhalePanel(private val project: Project) : JPanel(BorderLayout()) {
     private fun refreshEnvCombo() {
         suppressEnvComboListener = true
         try {
-            val envService = EnvironmentService.getInstance(project)
-            val envs = envService.getAll()
-            val activeId = envService.getActive()?.id
+            val collectionService = CollectionService.getInstance(project)
+            val col = collectionService.getAll().firstOrNull()
+            val envs = col?.environments ?: emptyList()
+            val activeId = col?.activeEnvironmentId
 
             envCombo.removeAllItems()
             envs.forEach { envCombo.addItem(it.name) }
