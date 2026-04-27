@@ -4,7 +4,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
-import com.sonarwhale.SonarwhaleStateService
 import com.sonarwhale.model.ApiEndpoint
 import com.sonarwhale.model.SavedRequest
 import java.nio.file.Path
@@ -24,6 +23,10 @@ class SonarwhaleScriptService(private val project: Project) {
      * Executes pre-scripts and returns the modified [ScriptContext].
      * Must be called from a background thread — sw.http makes blocking network calls.
      * Errors are captured into [console] rather than thrown.
+     *
+     * @param varMap  Resolved variable map from VariableResolver — seeds sw.env so scripts can read vars.
+     * @param collectionId  Active collection ID — used by flushEnvChanges after post-scripts.
+     * @param disabledLevels  Script levels to skip (Set<String> of ScriptLevel names).
      */
     fun executePreScripts(
         endpoint: ApiEndpoint,
@@ -31,10 +34,12 @@ class SonarwhaleScriptService(private val project: Project) {
         url: String,
         headers: Map<String, String>,
         body: String,
-        console: ConsoleOutput = ConsoleOutput()  // caller should provide shared instance; default discards entries
+        varMap: Map<String, String> = emptyMap(),
+        collectionId: String = "",
+        disabledLevels: Set<String> = emptySet(),
+        console: ConsoleOutput = ConsoleOutput()
     ): ScriptContext {
-        val stateService = SonarwhaleStateService.getInstance(project)
-        val env = stateService.getActiveEnvironment()?.variables?.toMutableMap() ?: mutableMapOf()
+        val env = varMap.toMutableMap()
         val ctx = ScriptContext(
             envSnapshot = env,
             request = MutableRequestContext(
@@ -45,19 +50,27 @@ class SonarwhaleScriptService(private val project: Project) {
             )
         )
         val tag = endpoint.tags.firstOrNull() ?: "Default"
-        val chain = resolver.resolvePreChain(tag, endpoint.method.name, endpoint.path, request.name)
+        val disabledScriptLevels = disabledLevels
+            .mapNotNull { runCatching { ScriptLevel.valueOf(it) }.getOrNull() }
+            .toSet()
+        val chain = resolver.resolvePreChain(tag, endpoint.method.name, endpoint.path, request.name, collectionId, disabledScriptLevels)
         runCatching { engine.executeChain(chain, ctx, console) }
             .onFailure { e ->
                 console.log(LogLevel.ERROR, "Pre-script chain failed: ${e.message ?: e.javaClass.simpleName}")
             }
-        flushEnvChanges(ctx.envSnapshot)
+        // Do NOT flush here — caller merges envSnapshot into varMap and calls executePostScripts which flushes.
         return ctx
     }
 
     /**
      * Executes post-scripts and returns the collected [TestResult]s.
+     * Also persists any env changes made by pre- or post-scripts to the collection.
      * Must be called from a background thread.
      * Errors are captured into [console] rather than thrown.
+     *
+     * @param collectionId     Active collection ID — for persisting env changes.
+     * @param originalVarMap   The var map from before pre-scripts ran — used to detect changes.
+     * @param disabledLevels   Script levels to skip (Set<String> of ScriptLevel names).
      */
     fun executePostScripts(
         endpoint: ApiEndpoint,
@@ -66,7 +79,10 @@ class SonarwhaleScriptService(private val project: Project) {
         responseHeaders: Map<String, String>,
         responseBody: String,
         scriptContext: ScriptContext,
-        console: ConsoleOutput = ConsoleOutput()  // caller should provide shared instance; default discards entries
+        collectionId: String = "",
+        originalVarMap: Map<String, String> = emptyMap(),
+        disabledLevels: Set<String> = emptySet(),
+        console: ConsoleOutput = ConsoleOutput()
     ): List<TestResult> {
         val response = ResponseContext(statusCode, responseHeaders, responseBody)
         val postCtx = ScriptContext(
@@ -75,12 +91,15 @@ class SonarwhaleScriptService(private val project: Project) {
             response = response
         )
         val tag = endpoint.tags.firstOrNull() ?: "Default"
-        val chain = resolver.resolvePostChain(tag, endpoint.method.name, endpoint.path, request.name)
+        val disabledScriptLevels = disabledLevels
+            .mapNotNull { runCatching { ScriptLevel.valueOf(it) }.getOrNull() }
+            .toSet()
+        val chain = resolver.resolvePostChain(tag, endpoint.method.name, endpoint.path, request.name, collectionId, disabledScriptLevels)
         runCatching { engine.executeChain(chain, postCtx, console) }
             .onFailure { e ->
                 console.log(LogLevel.ERROR, "Post-script chain failed: ${e.message ?: e.javaClass.simpleName}")
             }
-        flushEnvChanges(postCtx.envSnapshot)
+        flushEnvChanges(postCtx.envSnapshot, originalVarMap, collectionId)
         return postCtx.testResults
     }
 
@@ -211,12 +230,24 @@ class SonarwhaleScriptService(private val project: Project) {
         if (endpoint != null) ScriptChainResolver.sanitizeEndpointDir(endpoint.method.name, endpoint.path)
         else "unknown"
 
-    private fun flushEnvChanges(snapshot: MutableMap<String, String>) {
-        val copy = LinkedHashMap(snapshot)
+    private fun flushEnvChanges(
+        snapshot: MutableMap<String, String>,
+        originalVarMap: Map<String, String>,
+        collectionId: String
+    ) {
+        val changed = snapshot.filter { (k, v) -> originalVarMap[k] != v }
+        if (changed.isEmpty()) return
+
         ApplicationManager.getApplication().invokeLater {
-            val stateService = SonarwhaleStateService.getInstance(project)
-            val env = stateService.getActiveEnvironment() ?: return@invokeLater
-            stateService.upsertEnvironment(env.copy(variables = copy))
+            val collectionService = com.sonarwhale.service.CollectionService.getInstance(project)
+            val collection = collectionService.getById(collectionId) ?: return@invokeLater
+            val existing = collection.config.variables.toMutableList()
+            changed.forEach { (k, v) ->
+                val idx = existing.indexOfFirst { it.key == k }
+                if (idx >= 0) existing[idx] = existing[idx].copy(value = v)
+                else existing.add(com.sonarwhale.model.VariableEntry(key = k, value = v, enabled = true))
+            }
+            collectionService.updateConfig(collectionId, collection.config.copy(variables = existing))
         }
     }
 
