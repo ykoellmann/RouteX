@@ -19,3 +19,14 @@ enum class EndpointSource {
 enum class EndpointStatus {
     ACTIVE, ADDED, MODIFIED, REMOVED
 }
+
+enum class AuthMode {
+    INHERIT,
+    NONE,
+    BEARER,
+    BASIC,
+    API_KEY,
+    OAUTH2_CLIENT_CREDENTIALS
+}
+
+enum class ApiKeyLocation { HEADER, QUERY }

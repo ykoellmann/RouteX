@@ -11,7 +11,6 @@ import com.sonarwhale.model.ApiEndpoint
 import com.sonarwhale.model.AuthType
 import com.sonarwhale.model.HttpMethod
 import com.sonarwhale.model.SavedRequest
-import com.sonarwhale.script.ScriptLevel
 import com.sonarwhale.service.RouteIndexService
 import java.awt.BorderLayout
 import java.awt.CardLayout
@@ -43,14 +42,16 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private var expandedProportion = 0.58f
 
-    private val cardLayout      = CardLayout()
-    private val controllerPanel = JPanel(BorderLayout())
-    private val folderCardHolder = JPanel(BorderLayout())
-    private val cardPanel       = JPanel(cardLayout).also {
-        it.add(emptyLabel,       "empty")
-        it.add(splitter,         "content")
-        it.add(controllerPanel,  "controller")
-        it.add(folderCardHolder, "folder")
+    private val cardLayout             = CardLayout()
+    private val globalDetailPanel      = GlobalDetailPanel(project)
+    private val collectionDetailPanel  = CollectionDetailPanel(project)
+    private val controllerDetailPanel  = ControllerDetailPanel(project)
+    private val cardPanel              = JPanel(cardLayout).also {
+        it.add(emptyLabel,            "empty")
+        it.add(splitter,              "content")
+        it.add(globalDetailPanel,     "global")
+        it.add(collectionDetailPanel, "collection")
+        it.add(controllerDetailPanel, "controller")
     }
 
     private val headerHolder = JPanel(BorderLayout()).also { it.isVisible = false }
@@ -117,21 +118,23 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     fun showController(node: ControllerNode) {
-        showFolderPanel(ScriptLevel.TAG, tag = node.name)
+        headerHolder.isVisible = false
+        controllerDetailPanel.showController(node.name)
+        cardLayout.show(cardPanel, "controller")
+        revalidate(); repaint()
     }
 
     fun showGlobal() {
-        showFolderPanel(ScriptLevel.GLOBAL)
+        headerHolder.isVisible = false
+        globalDetailPanel.refresh()
+        cardLayout.show(cardPanel, "global")
+        revalidate(); repaint()
     }
 
-    private fun showFolderPanel(level: ScriptLevel, tag: String? = null) {
+    fun showCollection(collection: com.sonarwhale.model.ApiCollection) {
         headerHolder.isVisible = false
-        folderCardHolder.removeAll()
-        folderCardHolder.add(FolderScriptsPanel(project, level, tag,
-            onRefresh = { showFolderPanel(level, tag) }), BorderLayout.CENTER)
-        folderCardHolder.revalidate()
-        folderCardHolder.repaint()
-        cardLayout.show(cardPanel, "folder")
+        collectionDetailPanel.showCollection(collection)
+        cardLayout.show(cardPanel, "collection")
         revalidate(); repaint()
     }
 

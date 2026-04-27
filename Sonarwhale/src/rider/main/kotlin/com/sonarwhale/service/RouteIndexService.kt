@@ -9,20 +9,24 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.util.Alarm
 import com.sonarwhale.model.ApiEndpoint
+import com.sonarwhale.model.CollectionEnvironment
 import com.sonarwhale.model.EnvironmentSource
+import com.sonarwhale.model.SonarwhaleEnvironment
 import com.sonarwhale.openapi.OpenApiFetcher
 import com.sonarwhale.openapi.OpenApiParser
 
 /**
  * Haupt-Service: hält die Endpoint-Liste, triggert OpenAPI-Fetches, notifiziert die UI.
  * Ersetzt den alten SonarwhaleService (PSI-Basis).
+ *
+ * Endpoints are stored per-collection; IDs are prefixed with "{collectionId}:{method} {path}".
  */
 @Service(Service.Level.PROJECT)
 class RouteIndexService(private val project: Project) : Disposable {
 
     enum class FetchStatus { OK, CACHED, ERROR, LOADING }
 
-    private var cachedEndpoints: List<ApiEndpoint> = emptyList()
+    private val endpointsByCollection = mutableMapOf<String, List<ApiEndpoint>>()
     private var fetchStatus: FetchStatus = FetchStatus.OK
 
     /** The endpoint ID currently shown in the detail view (set by selectEndpoint / runRequest). */
@@ -42,7 +46,18 @@ class RouteIndexService(private val project: Project) : Disposable {
     private val intervalAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
     private val REFRESH_INTERVAL_MS = 60_000
 
-    val endpoints: List<ApiEndpoint> get() = cachedEndpoints
+    /** Flattened view of all endpoints across all collections (backwards-compatible). */
+    val endpoints: List<ApiEndpoint> get() = allEndpoints()
+
+    fun allEndpoints(): List<ApiEndpoint> = endpointsByCollection.values.flatten()
+
+    fun getEndpointsForCollection(collectionId: String): List<ApiEndpoint> =
+        endpointsByCollection[collectionId] ?: emptyList()
+
+    fun getCollectionId(endpointId: String): String? =
+        endpointsByCollection.entries.firstOrNull { (_, eps) ->
+            eps.any { it.id == endpointId }
+        }?.key
 
     init {
         val bus = project.messageBus.connect(this)
@@ -66,10 +81,13 @@ class RouteIndexService(private val project: Project) : Disposable {
         scheduleIntervalRefresh()
     }
 
-    /** Returns true when the active environment warrants automatic refresh (not a static import). */
+    /** Returns true when any collection has an active source that warrants automatic refresh. */
     private fun shouldAutoRefresh(): Boolean {
-        val source = EnvironmentService.getInstance(project).getActive()?.source
-        return source != null && source !is EnvironmentSource.StaticImport
+        val collectionService = CollectionService.getInstance(project)
+        return collectionService.getAll().any { col ->
+            val source = collectionService.getActiveSource(col.id)
+            source != null && source !is EnvironmentSource.StaticImport
+        }
     }
 
     /** Schedules a recurring 1-minute refresh for live sources. Reschedules itself after each run. */
@@ -86,8 +104,10 @@ class RouteIndexService(private val project: Project) : Disposable {
     // -------------------------------------------------------------------------
 
     fun refresh() {
-        val envService = EnvironmentService.getInstance(project)
-        val env = envService.getActive() ?: run {
+        val collectionService = CollectionService.getInstance(project)
+        val collections = collectionService.getAll()
+
+        if (collections.isEmpty()) {
             setEndpoints(emptyList())
             updateStatus(FetchStatus.ERROR)
             return
@@ -97,27 +117,58 @@ class RouteIndexService(private val project: Project) : Disposable {
         updateStatus(FetchStatus.LOADING)
 
         ApplicationManager.getApplication().executeOnPooledThread {
-            val cachedJson = envService.readCache(env.id)
-            val result = OpenApiFetcher.fetch(env, cachedJson)
+            var overallStatus = FetchStatus.OK
+            val newEndpointsByCollection = mutableMapOf<String, List<ApiEndpoint>>()
 
-            val (json, source, status) = when (result) {
-                is OpenApiFetcher.FetchResult.Success -> Triple(result.json, result.source, FetchStatus.OK)
-                is OpenApiFetcher.FetchResult.Cached  -> Triple(result.json, result.source, FetchStatus.CACHED)
-                is OpenApiFetcher.FetchResult.Error   -> Triple(null, null, FetchStatus.ERROR)
+            for (col in collections) {
+                val activeEnv: CollectionEnvironment =
+                    collectionService.getActiveEnvironment(col.id) ?: continue
+                val source = activeEnv.source
+
+                // Build a SonarwhaleEnvironment wrapper so we can reuse OpenApiFetcher.fetch
+                val envWrapper = SonarwhaleEnvironment(
+                    id = activeEnv.id,
+                    name = activeEnv.name,
+                    source = source,
+                    isActive = true
+                )
+
+                val cachedJson = collectionService.readCache(activeEnv.id)
+                val result = OpenApiFetcher.fetch(envWrapper, cachedJson)
+
+                val (json, endpointSource, colStatus) = when (result) {
+                    is OpenApiFetcher.FetchResult.Success -> Triple(result.json, result.source, FetchStatus.OK)
+                    is OpenApiFetcher.FetchResult.Cached  -> Triple(result.json, result.source, FetchStatus.CACHED)
+                    is OpenApiFetcher.FetchResult.Error   -> Triple(null, null, FetchStatus.ERROR)
+                }
+
+                if (result is OpenApiFetcher.FetchResult.Success) {
+                    collectionService.writeCache(activeEnv.id, result.json)
+                }
+
+                val parsed: List<ApiEndpoint> = if (json != null && endpointSource != null) {
+                    OpenApiParser.parse(json, endpointSource)
+                } else {
+                    // fall back to what we had before
+                    endpointsByCollection[col.id] ?: emptyList()
+                }
+
+                // Prefix each endpoint ID with the collection ID
+                val prefixed = parsed.map { ep -> ep.copy(id = "${col.id}:${ep.id}") }
+                newEndpointsByCollection[col.id] = prefixed
+
+                if (colStatus != FetchStatus.OK && overallStatus == FetchStatus.OK) {
+                    overallStatus = colStatus
+                }
             }
-
-            if (result is OpenApiFetcher.FetchResult.Success) {
-                envService.writeCache(env.id, result.json)
-            }
-
-            val newEndpoints = if (json != null && source != null)
-                OpenApiParser.parse(json, source)
-            else
-                cachedEndpoints
 
             ApplicationManager.getApplication().invokeLater {
-                setEndpoints(newEndpoints)
-                updateStatus(status)
+                endpointsByCollection.clear()
+                endpointsByCollection.putAll(newEndpointsByCollection)
+                // Notify listeners with the full flattened list
+                val snapshot = allEndpoints()
+                endpointListeners.toList().forEach { it(snapshot) }
+                updateStatus(overallStatus)
                 notifyLoading(false)
             }
         }
@@ -125,7 +176,8 @@ class RouteIndexService(private val project: Project) : Disposable {
 
     /** Setzt Endpoints zurück und führt einen vollständigen Refresh durch. */
     fun reScan() {
-        setEndpoints(emptyList())
+        endpointsByCollection.clear()
+        endpointListeners.toList().forEach { it(emptyList()) }
         refresh()
     }
 
@@ -134,8 +186,12 @@ class RouteIndexService(private val project: Project) : Disposable {
     // -------------------------------------------------------------------------
 
     fun setEndpoints(endpoints: List<ApiEndpoint>) {
-        cachedEndpoints = endpoints
-        val snapshot = cachedEndpoints
+        // Replace all collections' data with a single "unkeyed" bucket for backwards compatibility
+        endpointsByCollection.clear()
+        if (endpoints.isNotEmpty()) {
+            endpointsByCollection["__legacy__"] = endpoints
+        }
+        val snapshot = allEndpoints()
         ApplicationManager.getApplication().invokeLater {
             endpointListeners.toList().forEach { it(snapshot) }
         }
