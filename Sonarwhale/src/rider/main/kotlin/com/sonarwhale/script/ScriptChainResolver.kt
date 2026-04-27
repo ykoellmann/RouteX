@@ -15,11 +15,25 @@ import kotlin.io.path.isRegularFile
  */
 class ScriptChainResolver(private val scriptsRoot: Path) {
 
-    fun resolvePreChain(tag: String, method: String, path: String, requestName: String, collectionId: String = ""): List<ScriptFile> =
-        buildChain(tag, method, path, requestName, ScriptPhase.PRE, collectionId)
+    fun resolvePreChain(
+        tag: String,
+        method: String,
+        path: String,
+        requestName: String,
+        collectionId: String = "",
+        disabledLevels: Set<ScriptLevel> = emptySet()
+    ): List<ScriptFile> =
+        buildChain(tag, method, path, requestName, ScriptPhase.PRE, collectionId, disabledLevels)
 
-    fun resolvePostChain(tag: String, method: String, path: String, requestName: String, collectionId: String = ""): List<ScriptFile> =
-        buildChain(tag, method, path, requestName, ScriptPhase.POST, collectionId).reversed()
+    fun resolvePostChain(
+        tag: String,
+        method: String,
+        path: String,
+        requestName: String,
+        collectionId: String = "",
+        disabledLevels: Set<ScriptLevel> = emptySet()
+    ): List<ScriptFile> =
+        buildChain(tag, method, path, requestName, ScriptPhase.POST, collectionId, disabledLevels).reversed()
 
     private fun buildChain(
         tag: String,
@@ -27,7 +41,8 @@ class ScriptChainResolver(private val scriptsRoot: Path) {
         path: String,
         requestName: String,
         phase: ScriptPhase,
-        collectionId: String = ""
+        collectionId: String = "",
+        disabledLevels: Set<ScriptLevel> = emptySet()
     ): List<ScriptFile> {
         if (!scriptsRoot.exists()) return emptyList()
 
@@ -59,6 +74,7 @@ class ScriptChainResolver(private val scriptsRoot: Path) {
         }
 
         return includedLevels.mapNotNull { (dir, level) ->
+            if (level in disabledLevels) return@mapNotNull null
             val scriptFile = dir.resolve(fileName)
             if (scriptFile.exists() && scriptFile.isRegularFile()) {
                 ScriptFile(level = level, phase = phase, path = scriptFile)

@@ -146,4 +146,65 @@ class ScriptChainResolverTest {
         assertTrue(chain.none { it.level == ScriptLevel.GLOBAL || it.level == ScriptLevel.TAG })
         assertTrue(chain.any { it.level == ScriptLevel.ENDPOINT })
     }
+
+    @Test
+    fun `disabled GLOBAL level excludes global pre script`() {
+        pre() // global pre.js
+        pre("Users") // tag pre.js
+        val chain = resolver().resolvePreChain(
+            "Users", "GET", "/api/users", "Default",
+            disabledLevels = setOf(ScriptLevel.GLOBAL)
+        )
+        assertTrue(chain.none { it.level == ScriptLevel.GLOBAL })
+        assertTrue(chain.any { it.level == ScriptLevel.TAG })
+    }
+
+    @Test
+    fun `disabled TAG level excludes tag pre script but keeps global`() {
+        pre() // global
+        pre("Users") // tag
+        val chain = resolver().resolvePreChain(
+            "Users", "GET", "/api/users", "Default",
+            disabledLevels = setOf(ScriptLevel.TAG)
+        )
+        assertTrue(chain.none { it.level == ScriptLevel.TAG })
+        assertTrue(chain.any { it.level == ScriptLevel.GLOBAL })
+    }
+
+    @Test
+    fun `multiple disabled levels excludes all specified`() {
+        pre() // global
+        pre("Users") // tag
+        pre("Users", "GET__api_users") // endpoint
+        val chain = resolver().resolvePreChain(
+            "Users", "GET", "/api/users", "Default",
+            disabledLevels = setOf(ScriptLevel.GLOBAL, ScriptLevel.TAG)
+        )
+        assertTrue(chain.none { it.level == ScriptLevel.GLOBAL })
+        assertTrue(chain.none { it.level == ScriptLevel.TAG })
+        assertTrue(chain.any { it.level == ScriptLevel.ENDPOINT })
+    }
+
+    @Test
+    fun `disabled levels also filter post chain`() {
+        post() // global
+        post("Users") // tag
+        val chain = resolver().resolvePostChain(
+            "Users", "GET", "/api/users", "Default",
+            disabledLevels = setOf(ScriptLevel.GLOBAL)
+        )
+        assertTrue(chain.none { it.level == ScriptLevel.GLOBAL })
+        assertTrue(chain.any { it.level == ScriptLevel.TAG })
+    }
+
+    @Test
+    fun `empty disabledLevels returns full chain`() {
+        pre() // global
+        pre("Users") // tag
+        val chain = resolver().resolvePreChain(
+            "Users", "GET", "/api/users", "Default",
+            disabledLevels = emptySet()
+        )
+        assertEquals(2, chain.size)
+    }
 }
