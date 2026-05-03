@@ -67,6 +67,7 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
     var onToggle: (() -> Unit)? = null
     var isContentVisible: Boolean = true
         private set
+    var autoFormatResponse: Boolean = true
 
     private fun toggleCollapse() {
         isContentVisible = !isContentVisible
@@ -242,6 +243,7 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun formatBody(text: String, contentType: String): String {
+        if (!autoFormatResponse) return text
         val ct = contentType.lowercase()
         val trimmed = text.trim()
         return when {

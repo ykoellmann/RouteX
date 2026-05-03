@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.util.Alarm
+import com.sonarwhale.SonarwhaleStateService
 import com.sonarwhale.model.ApiEndpoint
 import com.sonarwhale.model.CollectionEnvironment
 import com.sonarwhale.model.EnvironmentSource
@@ -42,9 +43,11 @@ class RouteIndexService(private val project: Project) : Disposable {
     // Debounced file-save trigger: 500ms after last relevant file change
     private val refreshAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
 
-    // 1-minute periodic refresh for ServerUrl and FilePath sources
+    // Periodic refresh for ServerUrl and FilePath sources — interval read from settings
     private val intervalAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
-    private val REFRESH_INTERVAL_MS = 60_000
+    private val refreshIntervalMs: Long
+        get() = SonarwhaleStateService.getInstance(project)
+            .getGeneralSettings().autoRefreshIntervalSeconds.toLong() * 1000
 
     /** Flattened view of all endpoints across all collections (backwards-compatible). */
     val endpoints: List<ApiEndpoint> get() = allEndpoints()
@@ -92,13 +95,20 @@ class RouteIndexService(private val project: Project) : Disposable {
         }
     }
 
-    /** Schedules a recurring 1-minute refresh for live sources. Reschedules itself after each run. */
+    /** Schedules a recurring refresh for live sources. Reschedules itself after each run. */
     private fun scheduleIntervalRefresh() {
-        if (!shouldAutoRefresh()) return
+        val interval = refreshIntervalMs
+        if (interval == 0L || !shouldAutoRefresh()) return
         intervalAlarm.addRequest({
             refresh()
             scheduleIntervalRefresh()
-        }, REFRESH_INTERVAL_MS)
+        }, interval)
+    }
+
+    /** Cancels any pending interval refresh and reschedules with the current settings value. */
+    fun restartIntervalRefresh() {
+        intervalAlarm.cancelAllRequests()
+        scheduleIntervalRefresh()
     }
 
     // -------------------------------------------------------------------------

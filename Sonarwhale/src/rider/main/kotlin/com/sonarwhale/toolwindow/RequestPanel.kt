@@ -384,6 +384,8 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         }
     }
 
+    fun setDefaultContentType(contentType: String) = bodyPanel.setDefaultContentType(contentType)
+
     fun setPreviewMode(preview: Boolean) {
         previewMode = preview
         actionButtons.forEach { it.isVisible = !preview }
@@ -655,10 +657,26 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                 val finalBody    = ctx.request.body
 
                 // ── HTTP Request ───────────────────────────────────────────────
-                val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+                val generalSettings = stateService.getGeneralSettings()
+                val clientBuilder = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(
+                        if (generalSettings.followRedirects) HttpClient.Redirect.NORMAL
+                        else HttpClient.Redirect.NEVER
+                    )
+                if (!generalSettings.verifySsl) {
+                    val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                        override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                        override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                        override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+                    })
+                    val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS").also { it.init(null, trustAll, null) }
+                    clientBuilder.sslContext(sslCtx)
+                }
+                val client = clientBuilder.build()
                 val builder = HttpRequest.newBuilder()
                     .uri(URI.create(finalUrl))
-                    .timeout(Duration.ofSeconds(30))
+                    .timeout(Duration.ofSeconds(generalSettings.requestTimeoutSeconds.toLong()))
 
                 // Apply auth headers using postScriptVarMap so pre-script env changes are visible
                 val authUrlForBuilder = StringBuilder(finalUrl)

@@ -9,6 +9,7 @@ import com.sonarwhale.model.EndpointConfig
 import com.sonarwhale.model.Environment
 import com.sonarwhale.model.GlobalConfig
 import com.sonarwhale.model.SavedRequest
+import com.sonarwhale.model.SonarwhaleGeneralSettings
 import com.sonarwhale.model.TagConfig
 import java.util.UUID
 
@@ -30,6 +31,8 @@ class SonarwhaleStateService(@Suppress("UNUSED_PARAMETER") project: Project) : P
         @JvmField var tagConfigs: LinkedHashMap<String, String> = LinkedHashMap()
         // NEW: endpointId → JSON of EndpointConfig
         @JvmField var endpointConfigs: LinkedHashMap<String, String> = LinkedHashMap()
+        // General plugin settings JSON (SonarwhaleGeneralSettings)
+        @JvmField var generalSettings: String = ""
     }
 
     private val gson = Gson()
@@ -45,6 +48,7 @@ class SonarwhaleStateService(@Suppress("UNUSED_PARAMETER") project: Project) : P
         myState.tagConfigs.putAll(state.tagConfigs)
         myState.endpointConfigs.clear()
         myState.endpointConfigs.putAll(state.endpointConfigs)
+        myState.generalSettings = state.generalSettings
     }
 
     // ── Read ───────────────────────────────────────────────────────────────────
@@ -125,6 +129,19 @@ class SonarwhaleStateService(@Suppress("UNUSED_PARAMETER") project: Project) : P
 
     fun setEndpointConfig(config: EndpointConfig) {
         myState.endpointConfigs[config.endpointId] = gson.toJson(config)
+    }
+
+    // ── GeneralSettings ────────────────────────────────────────────────────────
+
+    fun getGeneralSettings(): SonarwhaleGeneralSettings {
+        val json = myState.generalSettings
+        if (json.isBlank()) return SonarwhaleGeneralSettings()
+        return runCatching { gson.fromJson(json, SonarwhaleGeneralSettings::class.java) }
+            .getOrDefault(SonarwhaleGeneralSettings())
+    }
+
+    fun setGeneralSettings(settings: SonarwhaleGeneralSettings) {
+        myState.generalSettings = gson.toJson(settings)
     }
 
     // ── Compatibility stubs (TODO: remove when Tasks 18/19/20 update callers) ─

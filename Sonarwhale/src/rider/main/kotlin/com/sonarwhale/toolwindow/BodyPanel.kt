@@ -224,11 +224,7 @@ class BodyPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun openInExternalEditor() {
         val text = currentEditor().text
-        val ext = when {
-            (contentTypeCombo.selectedItem as? String)?.contains("json") == true -> "json"
-            (contentTypeCombo.selectedItem as? String)?.let { it.contains("xml") || it.contains("html") } == true -> "xml"
-            else -> "txt"
-        }
+        val ext = ContentTypeUtils.langAndExt(contentTypeCombo.selectedItem as? String ?: "").second
 
         // Detach any previous listener so stale files don't keep syncing
         externalDocListener?.let { externalDoc?.removeDocumentListener(it) }
@@ -300,6 +296,11 @@ class BodyPanel(private val project: Project) : JPanel(BorderLayout()) {
     /** Returns the raw text for persistence (only meaningful in Raw mode). */
     fun getRawText(): String = currentEditor().text
     fun getRawContentType(): String = contentTypeCombo.selectedItem as? String ?: "application/json"
+
+    /** Sets the content-type combo default, applied only when currently in None mode (no user body yet). */
+    fun setDefaultContentType(contentType: String) {
+        if (radioNone.isSelected) contentTypeCombo.selectedItem = contentType
+    }
     fun getActiveMode(): String = when {
         radioNone.isSelected -> "none"
         radioForm.isSelected -> "form-data"

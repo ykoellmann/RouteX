@@ -65,6 +65,8 @@ class SonarwhaleGutterService(private val project: Project) : Disposable {
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    fun applySettings() = refreshAllOpenEditors()
+
     fun refreshAllOpenEditors() {
         ApplicationManager.getApplication().invokeLater {
             EditorFactory.getInstance().allEditors
@@ -99,6 +101,7 @@ class SonarwhaleGutterService(private val project: Project) : Disposable {
             .forEach { markup.removeHighlighter(it) }
 
         if (currentEndpoints.isEmpty()) return
+        if (!SonarwhaleStateService.getInstance(project).getGeneralSettings().gutterIconsEnabled) return
 
         val lines = (0 until document.lineCount).map { i ->
             val start = document.getLineStartOffset(i)

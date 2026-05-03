@@ -118,6 +118,8 @@ class SonarwhalePanel(private val project: Project) : JPanel(BorderLayout()) {
         applyFilter()
     }
 
+    fun applyGeneralSettings() = detailPanel.applyGeneralSettings()
+
     private fun applyFilter() {
         val query = searchField.text.trim().lowercase()
         val filtered = if (query.isEmpty()) allEndpoints

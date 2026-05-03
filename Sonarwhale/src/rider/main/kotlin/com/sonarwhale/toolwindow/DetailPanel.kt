@@ -9,6 +9,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
+import com.sonarwhale.SonarwhaleStateService
 import com.sonarwhale.gutter.SourceLocationService
 import com.sonarwhale.model.ApiEndpoint
 import com.sonarwhale.model.AuthType
@@ -74,6 +75,10 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()), DataPr
     private val headerHolder = JPanel(BorderLayout()).also { it.isVisible = false }
 
     init {
+        val generalSettings = SonarwhaleStateService.getInstance(project).getGeneralSettings()
+        responsePanel.autoFormatResponse = generalSettings.autoFormatResponse
+        requestPanel.setDefaultContentType(generalSettings.defaultContentType)
+
         requestPanel.onResponseReceived = { status, body, duration, contentType ->
             responsePanel.showResponse(status, body, duration, contentType)
         }
@@ -106,6 +111,13 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()), DataPr
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
+
+    /** Re-reads general settings and applies them to live components. */
+    fun applyGeneralSettings() {
+        val s = SonarwhaleStateService.getInstance(project).getGeneralSettings()
+        responsePanel.autoFormatResponse = s.autoFormatResponse
+        requestPanel.setDefaultContentType(s.defaultContentType)
+    }
 
     /** Called when an endpoint node is selected in the tree (no specific request). */
     fun showEndpoint(endpoint: ApiEndpoint?) {
