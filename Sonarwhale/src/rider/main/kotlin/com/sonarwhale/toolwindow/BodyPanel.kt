@@ -1,9 +1,18 @@
 package com.sonarwhale.toolwindow
 
+import com.intellij.icons.AllIcons
 import com.intellij.lang.Language
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.fileTypes.PlainTextFileType
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.EditorTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -12,6 +21,7 @@ import java.awt.CardLayout
 import java.awt.FlowLayout
 import java.awt.event.ActionEvent
 import java.io.File
+import java.nio.file.Files
 import javax.swing.AbstractAction
 import javax.swing.BorderFactory
 import javax.swing.ButtonGroup
@@ -20,7 +30,6 @@ import javax.swing.JComboBox
 import javax.swing.JFileChooser
 import javax.swing.JPanel
 import javax.swing.JRadioButton
-import com.intellij.openapi.editor.EditorFactory
 
 
 sealed class BodyContent {
@@ -71,6 +80,18 @@ class BodyPanel(private val project: Project) : JPanel(BorderLayout()) {
     private val binaryPathLabel = JBLabel("No file selected").apply { foreground = com.intellij.ui.JBColor.GRAY }
     private lateinit var binaryChooseButton: JButton
 
+    // "Open in Editor" button — only visible in raw mode
+    private val openInEditorBtn = JButton(AllIcons.Actions.EditSource).apply {
+        isBorderPainted = false
+        isContentAreaFilled = false
+        toolTipText = "Open in external editor (edits sync back)"
+        isVisible = false
+    }
+
+    // Tracks the external file's document and our listener so we can detach on re-open
+    private var externalDoc: com.intellij.openapi.editor.Document? = null
+    private var externalDocListener: DocumentListener? = null
+
     init {
         ButtonGroup().apply {
             add(radioNone); add(radioForm); add(radioRaw); add(radioBinary)
@@ -108,15 +129,17 @@ class BodyPanel(private val project: Project) : JPanel(BorderLayout()) {
         add(cardPanel, BorderLayout.CENTER)
 
         // Wire radio buttons
-        radioNone.addActionListener   { cardLayout.show(cardPanel, CARD_NONE);   fireChangeListeners() }
-        radioForm.addActionListener   { cardLayout.show(cardPanel, CARD_FORM);   fireChangeListeners() }
-        radioRaw.addActionListener    { cardLayout.show(cardPanel, CARD_RAW);    fireChangeListeners() }
-        radioBinary.addActionListener { cardLayout.show(cardPanel, CARD_BINARY); fireChangeListeners() }
+        radioNone.addActionListener   { cardLayout.show(cardPanel, CARD_NONE);   openInEditorBtn.isVisible = false; fireChangeListeners() }
+        radioForm.addActionListener   { cardLayout.show(cardPanel, CARD_FORM);   openInEditorBtn.isVisible = false; fireChangeListeners() }
+        radioRaw.addActionListener    { cardLayout.show(cardPanel, CARD_RAW);    openInEditorBtn.isVisible = true;  fireChangeListeners() }
+        radioBinary.addActionListener { cardLayout.show(cardPanel, CARD_BINARY); openInEditorBtn.isVisible = false; fireChangeListeners() }
 
         contentTypeCombo.addActionListener {
             rawCardLayout.show(rawCard, contentTypeCombo.selectedItem as String)
             fireChangeListeners()
         }
+
+        openInEditorBtn.addActionListener { openInExternalEditor() }
 
         formPanel.addChangeListener { fireChangeListeners() }
     }
@@ -134,6 +157,7 @@ class BodyPanel(private val project: Project) : JPanel(BorderLayout()) {
         strip.add(radioRaw)
         strip.add(contentTypeCombo)
         strip.add(radioBinary)
+        strip.add(openInEditorBtn)
         return strip
     }
 
@@ -172,11 +196,13 @@ class BodyPanel(private val project: Project) : JPanel(BorderLayout()) {
             is BodyContent.None -> {
                 radioNone.isSelected = true
                 cardLayout.show(cardPanel, CARD_NONE)
+                openInEditorBtn.isVisible = false
             }
             is BodyContent.FormData -> {
                 radioForm.isSelected = true
                 formPanel.setRows(content.rows)
                 cardLayout.show(cardPanel, CARD_FORM)
+                openInEditorBtn.isVisible = false
             }
             is BodyContent.Raw -> {
                 radioRaw.isSelected = true
@@ -184,12 +210,73 @@ class BodyPanel(private val project: Project) : JPanel(BorderLayout()) {
                 currentEditor().text = content.text
                 rawCardLayout.show(rawCard, content.contentType)
                 cardLayout.show(cardPanel, CARD_RAW)
+                openInEditorBtn.isVisible = true
             }
             is BodyContent.Binary -> {
                 radioBinary.isSelected = true
                 binaryPath = content.filePath
                 binaryPathLabel.text = if (content.filePath.isNotEmpty()) File(content.filePath).name else "No file selected"
                 cardLayout.show(cardPanel, CARD_BINARY)
+                openInEditorBtn.isVisible = false
+            }
+        }
+    }
+
+    private fun openInExternalEditor() {
+        val text = currentEditor().text
+        val ext = when {
+            (contentTypeCombo.selectedItem as? String)?.contains("json") == true -> "json"
+            (contentTypeCombo.selectedItem as? String)?.let { it.contains("xml") || it.contains("html") } == true -> "xml"
+            else -> "txt"
+        }
+
+        // Detach any previous listener so stale files don't keep syncing
+        externalDocListener?.let { externalDoc?.removeDocumentListener(it) }
+        externalDocListener = null
+        externalDoc = null
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val tempFile = Files.createTempFile("sonarwhale-body-", ".$ext").toFile()
+            tempFile.writeText(text)
+            tempFile.deleteOnExit()
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(tempFile)
+                ?: return@executeOnPooledThread
+
+            ApplicationManager.getApplication().invokeLater {
+                FileEditorManager.getInstance(project).openFile(vf, true)
+                val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return@invokeLater
+                externalDoc = doc
+                val listener = object : DocumentListener {
+                    override fun documentChanged(event: DocumentEvent) {
+                        val newText = doc.text
+                        ApplicationManager.getApplication().invokeLater {
+                            // Guard: externalDocListener is nulled in beforeFileClosed;
+                            // this check drops any invokeLater already queued before that.
+                            if (externalDocListener === this && radioRaw.isSelected) {
+                                currentEditor().text = newText
+                                fireChangeListeners()
+                            }
+                        }
+                    }
+                }
+                externalDocListener = listener
+                doc.addDocumentListener(listener)
+
+                // Detach in beforeFileClosed, which fires before IntelliJ reverts unsaved
+                // document content — so no revert-triggered documentChanged reaches us.
+                val connection = project.messageBus.connect()
+                connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
+                    override fun fileClosed(source: FileEditorManager, file: com.intellij.openapi.vfs.VirtualFile) {
+                        if (file == vf) {
+                            doc.removeDocumentListener(listener)
+                            if (externalDocListener === listener) {
+                                externalDocListener = null
+                                externalDoc = null
+                            }
+                            connection.disconnect()
+                        }
+                    }
+                })
             }
         }
     }

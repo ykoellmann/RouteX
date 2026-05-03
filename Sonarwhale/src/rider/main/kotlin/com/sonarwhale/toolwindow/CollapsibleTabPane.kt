@@ -62,6 +62,9 @@ class CollapsibleTabPane : JPanel(java.awt.BorderLayout()) {
         }
     }
 
+    /** Fired after each user tab click. [name] is the tab name, [expanded] is whether content is visible. */
+    var onTabChanged: ((name: String, expanded: Boolean) -> Unit)? = null
+
     private fun onTabClicked(idx: Int) {
         if (idx == selectedIdx && expanded) {
             expanded = false
@@ -73,6 +76,26 @@ class CollapsibleTabPane : JPanel(java.awt.BorderLayout()) {
             contentPanel.isVisible = true
         }
         updateButtonStyles()
+        revalidate(); repaint()
+        onTabChanged?.invoke(entries[selectedIdx].name, expanded)
+    }
+
+    /** Restores tab state without firing [onTabChanged]. Used to apply remembered state on content switch. */
+    fun restoreState(name: String?, isExpanded: Boolean) {
+        if (name == null || !isExpanded) {
+            expanded = false
+            contentPanel.isVisible = false
+            updateButtonStyles()
+        } else {
+            val idx = entries.indexOfFirst { it.name == name }
+            if (idx >= 0) {
+                selectedIdx = idx
+                expanded = true
+                cardLayout.show(contentPanel, name)
+                contentPanel.isVisible = true
+                updateButtonStyles()
+            }
+        }
         revalidate(); repaint()
     }
 

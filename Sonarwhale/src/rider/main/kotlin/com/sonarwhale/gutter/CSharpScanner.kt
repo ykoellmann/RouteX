@@ -75,12 +75,14 @@ class CSharpScanner : LanguageScanner {
         val tildeOverride: Boolean
     )
 
+    private data class ControllerSegment(val startLine: Int, val context: ControllerContext)
+
     // ── LanguageScanner ───────────────────────────────────────────────────────
 
     override fun scanLines(lines: List<String>, endpoints: List<ApiEndpoint>): List<ScanMatch> {
         if (endpoints.isEmpty()) return emptyList()
 
-        val ctx         = extractControllerContext(lines)
+        val segments    = buildControllerSegments(lines)
         val result      = mutableListOf<ScanMatch>()
         val markedLines = mutableSetOf<Int>()
 
@@ -93,6 +95,11 @@ class CSharpScanner : LanguageScanner {
             val isMapCall = methodPatterns.any { lower.contains(it.mapPrefix) }
 
             if (!isAttr && !isMapCall) { i++; continue }
+
+            // Use the context of the most recent class declaration at or before this line.
+            // Falls back to an empty context (covers top-level minimal-API files).
+            val ctx = segments.lastOrNull { it.startLine <= i }?.context
+                ?: ControllerContext(null, null, null)
 
             if (isAttr) {
                 val block = collectAttributeBlock(lines, i, ctx)
@@ -116,6 +123,52 @@ class CSharpScanner : LanguageScanner {
             }
         }
         return result
+    }
+
+    /**
+     * Scans the file for class declarations and returns one [ControllerSegment] per class,
+     * each with its own resolved [ControllerContext].  The segment's [startLine] is the line
+     * of the `class` keyword; everything up to the next segment belongs to it.
+     *
+     * Route/Area attributes are found by looking *backwards* from the class line through
+     * consecutive attribute/comment/blank lines — stopping at the first non-attribute line
+     * (e.g. `}` ending the previous class body).
+     */
+    private fun buildControllerSegments(lines: List<String>): List<ControllerSegment> {
+        val segments = mutableListOf<ControllerSegment>()
+
+        for (i in lines.indices) {
+            val classMatch = reClass.find(lines[i]) ?: continue
+            val baseName           = classMatch.groupValues[1]
+            val hasControllerSuffix = classMatch.groupValues[2].isNotEmpty()
+
+            var routeTemplate: String? = null
+            var areaName: String?      = null
+            var hasApiController       = false
+
+            // Look back through attribute/comment/blank lines for class-level annotations
+            for (j in i - 1 downTo maxOf(0, i - 20)) {
+                val trimmed = lines[j].trim()
+                if (trimmed.isEmpty()) continue              // blank lines are transparent
+                if (!trimmed.startsWith("[") && !trimmed.startsWith("//")) break  // hit non-attribute
+                if (routeTemplate == null) reRoute.find(lines[j])?.let { routeTemplate = it.groupValues[1] }
+                if (areaName      == null) reArea.find(lines[j])?.let  { areaName      = it.groupValues[1].lowercase() }
+                if (!hasApiController && trimmed.lowercase().contains("apicontroller")) hasApiController = true
+            }
+
+            // Skip non-controller classes (inner helpers, service classes, etc.)
+            // A controller must have at least one of: Controller suffix, [ApiController], [Route]
+            if (!hasControllerSuffix && !hasApiController && routeTemplate == null) continue
+
+            val controllerName = baseName.lowercase()
+            val tempCtx  = ControllerContext(null, controllerName, areaName)
+            val resolved = routeTemplate?.let { t ->
+                resolveTokens(t, tempCtx, null).trimStart('/').lowercase()
+            }
+            segments += ControllerSegment(i, ControllerContext(resolved, controllerName, areaName))
+        }
+
+        return segments
     }
 
     // ── Attribute block extraction ────────────────────────────────────────────
@@ -200,25 +253,6 @@ class CSharpScanner : LanguageScanner {
 
     private fun normalizeTemplate(template: String): String =
         reRouteParam.replace(template) { "{${it.groupValues[1]}}" }
-
-    private fun extractControllerContext(lines: List<String>): ControllerContext {
-        var controllerName: String? = null
-        var routeTemplate:  String? = null
-        var areaName:       String? = null
-
-        for (line in lines) {
-            if (controllerName == null) reClass.find(line)?.let { controllerName = it.groupValues[1].lowercase() }
-            if (routeTemplate  == null) reRoute.find(line)?.let { routeTemplate  = it.groupValues[1] }
-            if (areaName       == null) reArea.find(line)?.let  { areaName       = it.groupValues[1].lowercase() }
-            if (controllerName != null && routeTemplate != null && areaName != null) break
-        }
-
-        val resolved = routeTemplate?.let { t ->
-            resolveTokens(t, ControllerContext(null, controllerName, areaName), null)
-                .trimStart('/').lowercase()
-        }
-        return ControllerContext(prefix = resolved, controllerName = controllerName, areaName = areaName)
-    }
 
     private fun findMethodDeclarationLine(lines: List<String>, startLine: Int): Int {
         for (i in startLine until minOf(startLine + maxLookahead, lines.size)) {

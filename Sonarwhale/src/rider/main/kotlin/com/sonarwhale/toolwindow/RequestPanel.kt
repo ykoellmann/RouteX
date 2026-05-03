@@ -39,6 +39,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Paths
+import kotlin.io.path.exists
 import java.time.Duration
 import java.util.UUID
 import javax.swing.JButton
@@ -98,9 +99,17 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val tabs = CollapsibleTabPane()
 
-    // Scripts-tab checkbox state (populated in buildScriptsTab, read in show*/save methods)
+    // Remembered tab state — global (not per-request): name of last active tab + expanded flag
+    private var lastTabName: String? = null
+    private var lastTabExpanded: Boolean = true
+
+    // Scripts-tab state
     private val requestPreChecks  = mutableMapOf<ScriptLevel, javax.swing.JCheckBox>()
     private val requestPostChecks = mutableMapOf<ScriptLevel, javax.swing.JCheckBox>()
+    private lateinit var scriptPreBtn:  JButton
+    private lateinit var scriptPostBtn: JButton
+    private lateinit var scriptsPanel: JPanel
+    private var scriptsToggleSection: JComponent? = null
 
     var onResponseReceived: ((Int, String, Long) -> Unit)? = null
     /** Called after a successful save — use to refresh the tree. */
@@ -130,6 +139,8 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         tabs.addTab("Body", bodyPanel)
         tabs.addTab("Auth", authConfigPanel)
         tabs.addTab("Scripts", com.intellij.ui.components.JBScrollPane(buildScriptsTab()))
+
+        tabs.onTabChanged = { name, exp -> lastTabName = name; lastTabExpanded = exp }
 
         add(buildTopBar(), BorderLayout.NORTH)
         add(tabs, BorderLayout.CENTER)
@@ -172,22 +183,49 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         panel.layout = javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS)
         panel.border = JBUI.Borders.empty(8)
 
-        val preBtn  = JButton("Pre-script").apply  { addActionListener { openOrCreateScript(ScriptPhase.PRE) } }
-        val postBtn = JButton("Post-script").apply { addActionListener { openOrCreateScript(ScriptPhase.POST) } }
+        scriptPreBtn  = JButton("Pre-script").apply  { addActionListener { openOrCreateScript(ScriptPhase.PRE) } }
+        scriptPostBtn = JButton("Post-script").apply { addActionListener { openOrCreateScript(ScriptPhase.POST) } }
 
         val btnRow = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0)).also {
             it.alignmentX = java.awt.Component.LEFT_ALIGNMENT
-            it.add(preBtn); it.add(postBtn)
+            it.add(scriptPreBtn); it.add(scriptPostBtn)
         }
 
-        val requestLevels = listOf(ScriptLevel.GLOBAL, ScriptLevel.COLLECTION, ScriptLevel.TAG, ScriptLevel.ENDPOINT)
-
         panel.add(btnRow)
-        panel.add(javax.swing.Box.createVerticalStrut(12))
-        panel.add(com.intellij.ui.components.JBLabel("Disable inherited:").apply { alignmentX = java.awt.Component.LEFT_ALIGNMENT })
-        panel.add(javax.swing.Box.createVerticalStrut(4))
-        panel.add(buildToggleGrid(requestLevels, requestPreChecks, requestPostChecks) { saveRequestToggles() })
+        scriptsPanel = panel
         return panel
+    }
+
+    private fun setScriptsToggleLevels(levels: List<ScriptLevel>) {
+        scriptsToggleSection?.let { scriptsPanel.remove(it) }
+        requestPreChecks.clear()
+        requestPostChecks.clear()
+
+        val section = JPanel()
+        section.layout = javax.swing.BoxLayout(section, javax.swing.BoxLayout.Y_AXIS)
+        section.add(javax.swing.Box.createVerticalStrut(12))
+        section.add(com.intellij.ui.components.JBLabel("Disable inherited:").apply { alignmentX = java.awt.Component.LEFT_ALIGNMENT })
+        section.add(javax.swing.Box.createVerticalStrut(4))
+        section.add(buildToggleGrid(levels, requestPreChecks, requestPostChecks) { saveRequestToggles() })
+
+        scriptsToggleSection = section
+        scriptsPanel.add(section)
+        scriptsPanel.revalidate()
+        scriptsPanel.repaint()
+    }
+
+    private fun refreshScriptButtons() {
+        val endpoint = currentEndpoint ?: return
+        val request  = currentRequest  ?: SavedRequest(name = currentRequestName)
+        val scriptService = SonarwhaleScriptService.getInstance(project)
+        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread {
+            val preExists  = scriptService.getScriptPath(ScriptPhase.PRE,  ScriptLevel.REQUEST, endpoint.tags.firstOrNull() ?: "Default", endpoint, request).exists()
+            val postExists = scriptService.getScriptPath(ScriptPhase.POST, ScriptLevel.REQUEST, endpoint.tags.firstOrNull() ?: "Default", endpoint, request).exists()
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                scriptPreBtn.font  = scriptPreBtn.font.deriveFont(if (preExists)  Font.BOLD else Font.PLAIN)
+                scriptPostBtn.font = scriptPostBtn.font.deriveFont(if (postExists) Font.BOLD else Font.PLAIN)
+            }
+        }
     }
 
     private fun buildToggleGrid(
@@ -200,21 +238,27 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         grid.alignmentX = java.awt.Component.LEFT_ALIGNMENT
         val gbc = GridBagConstraints().apply {
             anchor = GridBagConstraints.WEST
-            insets = Insets(2, 0, 2, 8)
+            insets = Insets(1, 0, 1, 12)
         }
+        // Row 0: header row — empty label + one level name per column
         gbc.gridy = 0; gbc.gridx = 0; grid.add(JPanel(), gbc)
-        gbc.gridx = 1; grid.add(com.intellij.ui.components.JBLabel("Pre"), gbc)
-        gbc.gridx = 2; grid.add(com.intellij.ui.components.JBLabel("Post"), gbc)
-
         levels.forEachIndexed { i, level ->
-            val preCb  = javax.swing.JCheckBox().apply { isSelected = true; addActionListener { onChanged() } }
-            val postCb = javax.swing.JCheckBox().apply { isSelected = true; addActionListener { onChanged() } }
-            preChecks[level]  = preCb
-            postChecks[level] = postCb
-            gbc.gridy = i + 1
-            gbc.gridx = 0; grid.add(com.intellij.ui.components.JBLabel(level.name.lowercase().replaceFirstChar { it.uppercase() }), gbc)
-            gbc.gridx = 1; grid.add(preCb,  gbc)
-            gbc.gridx = 2; grid.add(postCb, gbc)
+            gbc.gridx = i + 1
+            grid.add(com.intellij.ui.components.JBLabel(level.name.lowercase().replaceFirstChar { it.uppercase() }), gbc)
+        }
+        // Row 1: Pre row
+        gbc.gridy = 1; gbc.gridx = 0; grid.add(com.intellij.ui.components.JBLabel("Pre"), gbc)
+        levels.forEachIndexed { i, level ->
+            val cb = javax.swing.JCheckBox().apply { isSelected = true; addActionListener { onChanged() } }
+            preChecks[level] = cb
+            gbc.gridx = i + 1; grid.add(cb, gbc)
+        }
+        // Row 2: Post row
+        gbc.gridy = 2; gbc.gridx = 0; grid.add(com.intellij.ui.components.JBLabel("Post"), gbc)
+        levels.forEachIndexed { i, level ->
+            val cb = javax.swing.JCheckBox().apply { isSelected = true; addActionListener { onChanged() } }
+            postChecks[level] = cb
+            gbc.gridx = i + 1; grid.add(cb, gbc)
         }
         return grid
     }
@@ -262,8 +306,11 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
             newInherited = resolveInheritedAuthMode(endpoint)
         )
 
-        // Scripts tab toggles
+        // Scripts tab toggles + existence indicators
+        // REQUEST level can disable all parent levels including ENDPOINT
+        setScriptsToggleLevels(listOf(ScriptLevel.GLOBAL, ScriptLevel.COLLECTION, ScriptLevel.TAG, ScriptLevel.ENDPOINT))
         updateRequestToggles(request.config.disabledPreLevels, request.config.disabledPostLevels)
+        refreshScriptButtons()
 
         // Body
         if (hasBody) {
@@ -278,10 +325,7 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
             bodyPanel.setContent(if (isGetOrHead) BodyContent.None else BodyContent.Raw("", "application/json"))
         }
 
-        // Select Body tab by default when there is a body, otherwise keep current selection
-        if (hasBody && tabs.selectedIndex != tabs.indexOfComponent(bodyPanel)) {
-            tabs.selectedIndex = tabs.indexOfComponent(bodyPanel)
-        }
+        applyTabState(hasBody)
         updateComputedUrl()
         saveButton.isEnabled = true
     }
@@ -313,8 +357,11 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
             newInherited = resolveInheritedAuthMode(endpoint)
         )
 
-        // Scripts tab toggles
+        // Scripts tab toggles + existence indicators
+        // ENDPOINT level can only disable parent levels, not itself
+        setScriptsToggleLevels(listOf(ScriptLevel.GLOBAL, ScriptLevel.COLLECTION, ScriptLevel.TAG))
         updateRequestToggles(emptySet(), emptySet())
+        refreshScriptButtons()
 
         if (hasBody) {
             bodyPanel.setContent(BodyContent.Raw(buildBodyTemplate(endpoint), "application/json"))
@@ -322,9 +369,19 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
             bodyPanel.setContent(BodyContent.None)
         }
 
-        if (hasBody) tabs.selectedIndex = tabs.indexOfComponent(bodyPanel)
+        applyTabState(hasBody)
         updateComputedUrl()
         saveButton.isEnabled = true
+    }
+
+    /** Restores the last user-selected tab state, or defaults to Body on first load. */
+    private fun applyTabState(hasBody: Boolean) {
+        if (lastTabName == null) {
+            // First load — default to Body if endpoint has a body, otherwise leave Params selected
+            if (hasBody) tabs.selectedIndex = tabs.indexOfComponent(bodyPanel)
+        } else {
+            tabs.restoreState(lastTabName, lastTabExpanded)
+        }
     }
 
     fun setPreviewMode(preview: Boolean) {

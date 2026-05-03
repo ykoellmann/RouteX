@@ -1,7 +1,10 @@
 package com.sonarwhale.toolwindow
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.DataProvider
 import com.intellij.openapi.project.Project
+import com.intellij.pom.Navigatable
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.components.JBLabel
@@ -25,7 +28,21 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.KeyStroke
 
-class DetailPanel(private val project: Project) : JPanel(BorderLayout()) {
+class DetailPanel(private val project: Project) : JPanel(BorderLayout()), DataProvider {
+
+    override fun getData(dataId: String): Any? {
+        if (CommonDataKeys.NAVIGATABLE.`is`(dataId)) {
+            val epId = RouteIndexService.getInstance(project).currentEndpointId ?: return null
+            val locService = SourceLocationService.getInstance(project)
+            if (!locService.canNavigate(epId)) return null
+            return object : Navigatable {
+                override fun navigate(requestFocus: Boolean) { locService.navigate(epId) }
+                override fun canNavigate(): Boolean = locService.canNavigate(epId)
+                override fun canNavigateToSource(): Boolean = locService.canNavigate(epId)
+            }
+        }
+        return null
+    }
 
     val requestPanel  = RequestPanel(project)
     private val responsePanel = ResponsePanel(project)

@@ -1,13 +1,13 @@
 package com.sonarwhale.toolwindow
 
+import com.intellij.icons.AllIcons
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
-import java.awt.event.ActionEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import javax.swing.AbstractAction
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
@@ -67,44 +67,41 @@ class ParamsTablePanel : JPanel(BorderLayout()) {
                 }
             }
         })
-        val scrollPane = JBScrollPane(table)
-        add(scrollPane, BorderLayout.CENTER)
 
-        add(toolbar, BorderLayout.SOUTH)
-
-        appendBlankRow()
+        add(toolbar, BorderLayout.NORTH)
+        add(JBScrollPane(table), BorderLayout.CENTER)
 
         tableModel.addTableModelListener {
             fireChangeListeners()
-            // Auto-append blank row when last row's key is edited and non-empty
-            val lastRow = tableModel.rowCount - 1
-            if (lastRow >= 0 && (tableModel.getValueAt(lastRow, 1) as? String)?.isNotEmpty() == true) {
-                appendBlankRow()
-            }
         }
     }
 
     private fun buildToolbar(): JPanel {
-        val panel = JPanel().apply { border = JBUI.Borders.empty(2, 0, 0, 0) }
+        val panel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0)).apply {
+            border = JBUI.Borders.customLineBottom(JBColor.border())
+        }
 
-        val addBtn = JButton(object : AbstractAction("+") {
-            override fun actionPerformed(e: ActionEvent) {
+        val addBtn = JButton(AllIcons.General.Add).apply {
+            isBorderPainted = false
+            isContentAreaFilled = false
+            toolTipText = "Add row"
+            addActionListener {
                 appendBlankRow()
                 val lastRow = tableModel.rowCount - 1
                 table.editCellAt(lastRow, 1)
                 table.transferFocus()
             }
-        }).apply { toolTipText = "Add row" }
+        }
 
-        val removeBtn = JButton(object : AbstractAction("−") {
-            override fun actionPerformed(e: ActionEvent) {
+        val removeBtn = JButton(AllIcons.General.Remove).apply {
+            isBorderPainted = false
+            isContentAreaFilled = false
+            toolTipText = "Remove selected row"
+            addActionListener {
                 val row = table.selectedRow
-                // Don't remove the last blank row
-                if (row >= 0 && tableModel.rowCount > 1) {
-                    tableModel.removeRow(row)
-                }
+                if (row >= 0) tableModel.removeRow(row)
             }
-        }).apply { toolTipText = "Remove selected row" }
+        }
 
         panel.add(addBtn)
         panel.add(removeBtn)
@@ -128,13 +125,11 @@ class ParamsTablePanel : JPanel(BorderLayout()) {
         return rows
     }
 
-    /** Replaces content; always ensures one trailing blank row. */
     fun setRows(rows: List<NameValueRow>) {
         tableModel.rowCount = 0
         rows.forEach { row ->
             tableModel.addRow(arrayOf(row.enabled, row.key, row.value, row.description))
         }
-        appendBlankRow()
     }
 
     fun addChangeListener(l: () -> Unit) {

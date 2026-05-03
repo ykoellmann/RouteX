@@ -113,28 +113,33 @@ class HierarchyConfigPanel(
         grid.alignmentX = LEFT_ALIGNMENT
         val gbc = java.awt.GridBagConstraints().apply {
             anchor = java.awt.GridBagConstraints.WEST
-            insets = java.awt.Insets(2, 0, 2, 8)
+            insets = java.awt.Insets(1, 0, 1, 12)
         }
+        // Row 0: header — empty + one level name per column
         gbc.gridy = 0; gbc.gridx = 0; grid.add(JPanel(), gbc)
-        gbc.gridx = 1; grid.add(javax.swing.JLabel("Pre"), gbc)
-        gbc.gridx = 2; grid.add(javax.swing.JLabel("Post"), gbc)
-
         levels.forEachIndexed { i, level ->
-            val preCb  = javax.swing.JCheckBox().apply {
+            gbc.gridx = i + 1
+            grid.add(javax.swing.JLabel(level.name.lowercase().replaceFirstChar { it.uppercase() }), gbc)
+        }
+        // Row 1: Pre
+        gbc.gridy = 1; gbc.gridx = 0; grid.add(javax.swing.JLabel("Pre"), gbc)
+        levels.forEachIndexed { i, level ->
+            val cb = javax.swing.JCheckBox().apply {
                 isSelected = !config.disabledPreLevels.contains(level.name)
                 addActionListener { onToggleChanged() }
             }
-            val postCb = javax.swing.JCheckBox().apply {
+            preCheckboxes[level] = cb
+            gbc.gridx = i + 1; grid.add(cb, gbc)
+        }
+        // Row 2: Post
+        gbc.gridy = 2; gbc.gridx = 0; grid.add(javax.swing.JLabel("Post"), gbc)
+        levels.forEachIndexed { i, level ->
+            val cb = javax.swing.JCheckBox().apply {
                 isSelected = !config.disabledPostLevels.contains(level.name)
                 addActionListener { onToggleChanged() }
             }
-            preCheckboxes[level]  = preCb
-            postCheckboxes[level] = postCb
-
-            gbc.gridy = i + 1
-            gbc.gridx = 0; grid.add(javax.swing.JLabel(level.name.lowercase().replaceFirstChar { it.uppercase() }), gbc)
-            gbc.gridx = 1; grid.add(preCb,  gbc)
-            gbc.gridx = 2; grid.add(postCb, gbc)
+            postCheckboxes[level] = cb
+            gbc.gridx = i + 1; grid.add(cb, gbc)
         }
         return grid
     }

@@ -1,5 +1,6 @@
 package com.sonarwhale.toolwindow
 
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -33,7 +34,12 @@ class ConsolePanel : JPanel(BorderLayout()) {
         border = JBUI.Borders.empty(4)
     }
     private val scroll = JBScrollPane(textPane)
-    private val clearButton = JButton("Clear").apply { font = font.deriveFont(10f) }
+    private val clearButton = JButton(AllIcons.Actions.GC).apply {
+        isBorderPainted = false
+        isContentAreaFilled = false
+        toolTipText = "Clear console"
+        preferredSize = java.awt.Dimension(20, 20)
+    }
     private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS")
     private val doc get() = textPane.styledDocument
 
@@ -68,17 +74,15 @@ class ConsolePanel : JPanel(BorderLayout()) {
     }
 
     init {
-        val header = JPanel(BorderLayout(4, 0))
-        header.border = JBUI.Borders.compound(
-            JBUI.Borders.customLineBottom(JBColor.border()),
-            JBUI.Borders.empty(3, 8)
-        )
-        header.add(JBLabel("Console").apply {
-            font = font.deriveFont(Font.BOLD, 11f)
-            foreground = JBColor.GRAY
-        }, BorderLayout.WEST)
-        header.add(clearButton, BorderLayout.EAST)
-        add(header, BorderLayout.NORTH)
+        val toolbar = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLineBottom(JBColor.border()),
+                JBUI.Borders.empty(1, 2)
+            )
+            isOpaque = false
+            add(clearButton, BorderLayout.EAST)
+        }
+        add(toolbar, BorderLayout.NORTH)
         add(scroll, BorderLayout.CENTER)
 
         clearButton.addActionListener { showEntries(emptyList()) }

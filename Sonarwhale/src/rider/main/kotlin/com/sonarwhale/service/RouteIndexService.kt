@@ -67,9 +67,11 @@ class RouteIndexService(private val project: Project) : Disposable {
             com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES,
             object : BulkFileListener {
                 override fun after(events: List<VFileEvent>) {
+                    val projectBase = project.basePath ?: return
                     val relevant = events.any { e ->
                         val ext = e.file?.extension?.lowercase()
-                        ext in listOf("json", "yaml", "yml")
+                        if (ext !in listOf("json", "yaml", "yml")) return@any false
+                        e.file?.path?.startsWith(projectBase) == true
                     }
                     if (!relevant) return
                     refreshAlarm.cancelAllRequests()
