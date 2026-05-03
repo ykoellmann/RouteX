@@ -1,5 +1,7 @@
 package com.sonarwhale.toolwindow
 
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 import com.intellij.icons.AllIcons
 import com.intellij.ide.scratch.ScratchRootType
 import com.intellij.lang.Language
@@ -146,7 +148,7 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
                 bodyArea.text = text
                 bodyArea.caretPosition = 0
                 if (text.isNotEmpty()) {
-                    val (_, ext) = contentTypeToLangAndExt(currentContentType)
+                    val (_, ext) = ContentTypeUtils.langAndExt(currentContentType)
                     openButton.toolTipText = "Open in editor as .$ext"
                     openButton.isVisible = true
                 }
@@ -222,27 +224,13 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun openInEditor() {
         val content = bodyArea.text.ifEmpty { return }
-        val (langId, ext) = contentTypeToLangAndExt(currentContentType)
+        val (langId, ext) = ContentTypeUtils.langAndExt(currentContentType)
         val lang = langId.takeIf { it.isNotEmpty() }?.let { Language.findLanguageByID(it) }
             ?: PlainTextLanguage.INSTANCE
         val scratch = ScratchRootType.getInstance()
             .createScratchFile(project, "sonarwhale-response.$ext", lang, content)
             ?: return
         FileEditorManager.getInstance(project).openFile(scratch, true)
-    }
-
-    private fun contentTypeToLangAndExt(contentType: String): Pair<String, String> {
-        val ct = contentType.lowercase()
-        return when {
-            "json"                       in ct -> "JSON"       to "json"
-            "html"                       in ct -> "HTML"       to "html"
-            "xml"                        in ct -> "XML"        to "xml"
-            "javascript" in ct || "ecmascript" in ct -> "JavaScript" to "js"
-            "css"                        in ct -> "CSS"        to "css"
-            "yaml"                       in ct -> "yaml"       to "yaml"
-            "plain"                      in ct -> ""           to "txt"
-            else                               -> ""           to "txt"
-        }
     }
 
     private fun statusColor(code: Int): Color = when {
@@ -258,37 +246,15 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
         val trimmed = text.trim()
         return when {
             "json" in ct || (ct.isEmpty() && (trimmed.startsWith("{") || trimmed.startsWith("[")))
-                -> runCatching { formatJson(trimmed) }.getOrDefault(text)
+                -> runCatching { prettyGson.toJson(JsonParser.parseString(trimmed)) }.getOrDefault(text)
             "xml" in ct || "html" in ct
                 -> runCatching { formatXml(trimmed) }.getOrDefault(text)
             else -> text
         }
     }
 
-    private fun formatJson(json: String): String {
-        val sb = StringBuilder()
-        var indent = 0
-        var inString = false
-        var i = 0
-        while (i < json.length) {
-            val c = json[i]
-            when {
-                c == '"' && (i == 0 || json[i - 1] != '\\') -> { inString = !inString; sb.append(c) }
-                inString -> sb.append(c)
-                c == '{' || c == '[' -> { sb.append(c); indent++; sb.append('\n').append("  ".repeat(indent)) }
-                c == '}' || c == ']' -> { indent--; sb.append('\n').append("  ".repeat(indent)).append(c) }
-                c == ',' -> { sb.append(c); sb.append('\n').append("  ".repeat(indent)) }
-                c == ':' -> sb.append(": ")
-                c == ' ' || c == '\n' || c == '\r' || c == '\t' -> {}
-                else -> sb.append(c)
-            }
-            i++
-        }
-        return sb.toString()
-    }
-
     private fun formatXml(xml: String): String {
-        val transformer = javax.xml.transform.TransformerFactory.newInstance().newTransformer().apply {
+        val transformer = xmlTransformerFactory.newTransformer().apply {
             setOutputProperty(javax.xml.transform.OutputKeys.INDENT, "yes")
             setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2")
             setOutputProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION, "yes")
@@ -299,5 +265,10 @@ class ResponsePanel(private val project: Project) : JPanel(BorderLayout()) {
             javax.xml.transform.stream.StreamResult(result)
         )
         return result.toString().trim()
+    }
+
+    companion object {
+        private val prettyGson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
+        private val xmlTransformerFactory = javax.xml.transform.TransformerFactory.newInstance()
     }
 }
