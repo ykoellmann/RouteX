@@ -17,4 +17,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = "ReSharperPlugin.Sonarwhale"
+rootProject.name = "Sonarwhale"
