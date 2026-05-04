@@ -102,46 +102,17 @@ class HierarchyConfigPanel(
             panel.add(Box.createVerticalStrut(12))
             panel.add(javax.swing.JLabel("Disable inherited:").apply { alignmentX = LEFT_ALIGNMENT })
             panel.add(Box.createVerticalStrut(4))
-            panel.add(buildToggleGrid(parentLevels))
+            panel.add(buildScriptToggleGrid(
+                parentLevels,
+                preCheckboxes,
+                postCheckboxes,
+                isPreEnabled  = { level -> !config.disabledPreLevels.contains(level.name) },
+                isPostEnabled = { level -> !config.disabledPostLevels.contains(level.name) },
+                onChanged     = { onToggleChanged() }
+            ))
         }
 
         return panel
-    }
-
-    private fun buildToggleGrid(levels: List<com.sonarwhale.script.ScriptLevel>): JPanel {
-        val grid = JPanel(java.awt.GridBagLayout())
-        grid.alignmentX = LEFT_ALIGNMENT
-        val gbc = java.awt.GridBagConstraints().apply {
-            anchor = java.awt.GridBagConstraints.WEST
-            insets = java.awt.Insets(1, 0, 1, 12)
-        }
-        // Row 0: header — empty + one level name per column
-        gbc.gridy = 0; gbc.gridx = 0; grid.add(JPanel(), gbc)
-        levels.forEachIndexed { i, level ->
-            gbc.gridx = i + 1
-            grid.add(javax.swing.JLabel(level.name.lowercase().replaceFirstChar { it.uppercase() }), gbc)
-        }
-        // Row 1: Pre
-        gbc.gridy = 1; gbc.gridx = 0; grid.add(javax.swing.JLabel("Pre"), gbc)
-        levels.forEachIndexed { i, level ->
-            val cb = javax.swing.JCheckBox().apply {
-                isSelected = !config.disabledPreLevels.contains(level.name)
-                addActionListener { onToggleChanged() }
-            }
-            preCheckboxes[level] = cb
-            gbc.gridx = i + 1; grid.add(cb, gbc)
-        }
-        // Row 2: Post
-        gbc.gridy = 2; gbc.gridx = 0; grid.add(javax.swing.JLabel("Post"), gbc)
-        levels.forEachIndexed { i, level ->
-            val cb = javax.swing.JCheckBox().apply {
-                isSelected = !config.disabledPostLevels.contains(level.name)
-                addActionListener { onToggleChanged() }
-            }
-            postCheckboxes[level] = cb
-            gbc.gridx = i + 1; grid.add(cb, gbc)
-        }
-        return grid
     }
 
     private fun onToggleChanged() {
@@ -252,4 +223,41 @@ private class VariablesTableModel : AbstractTableModel() {
         }
         fireTableCellUpdated(row, col)
     }
+}
+
+// ── Shared script toggle grid ─────────────────────────────────────────────────
+
+internal fun buildScriptToggleGrid(
+    levels: List<com.sonarwhale.script.ScriptLevel>,
+    preChecks: MutableMap<com.sonarwhale.script.ScriptLevel, javax.swing.JCheckBox>,
+    postChecks: MutableMap<com.sonarwhale.script.ScriptLevel, javax.swing.JCheckBox>,
+    isPreEnabled:  (com.sonarwhale.script.ScriptLevel) -> Boolean = { true },
+    isPostEnabled: (com.sonarwhale.script.ScriptLevel) -> Boolean = { true },
+    onChanged: () -> Unit
+): javax.swing.JPanel {
+    val grid = javax.swing.JPanel(java.awt.GridBagLayout())
+    grid.alignmentX = java.awt.Component.LEFT_ALIGNMENT
+    val gbc = java.awt.GridBagConstraints().apply {
+        anchor = java.awt.GridBagConstraints.WEST
+        insets = java.awt.Insets(1, 0, 1, 12)
+    }
+    gbc.gridy = 0; gbc.gridx = 0; grid.add(javax.swing.JPanel(), gbc)
+    levels.forEachIndexed { i, level ->
+        gbc.gridx = i + 1
+        grid.add(com.intellij.ui.components.JBLabel(
+            level.name.lowercase().replaceFirstChar { it.uppercase() }), gbc)
+    }
+    gbc.gridy = 1; gbc.gridx = 0; grid.add(com.intellij.ui.components.JBLabel("Pre"), gbc)
+    levels.forEachIndexed { i, level ->
+        val cb = javax.swing.JCheckBox().apply { isSelected = isPreEnabled(level); addActionListener { onChanged() } }
+        preChecks[level] = cb
+        gbc.gridx = i + 1; grid.add(cb, gbc)
+    }
+    gbc.gridy = 2; gbc.gridx = 0; grid.add(com.intellij.ui.components.JBLabel("Post"), gbc)
+    levels.forEachIndexed { i, level ->
+        val cb = javax.swing.JCheckBox().apply { isSelected = isPostEnabled(level); addActionListener { onChanged() } }
+        postChecks[level] = cb
+        gbc.gridx = i + 1; grid.add(cb, gbc)
+    }
+    return grid
 }

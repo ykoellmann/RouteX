@@ -170,6 +170,35 @@ class EndpointTree(private val project: Project) : Tree() {
         popup.component.show(e.component, e.x, e.y)
     }
 
+    private fun addScriptPair(
+        group: DefaultActionGroup,
+        level: ScriptLevel,
+        tag: String? = null,
+        endpoint: ApiEndpoint? = null,
+        request: SavedRequest? = null
+    ) {
+        val label = level.name.lowercase().replaceFirstChar { it.uppercase() }
+        group.add(object : AnAction("Create Pre-Script ($label)", "", AllIcons.Actions.Edit) {
+            override fun actionPerformed(e: AnActionEvent) {
+                openOrCreateScriptInBackground(ScriptPhase.PRE, level, tag, endpoint, request)
+            }
+        })
+        group.add(object : AnAction("Create Post-Script ($label)", "", AllIcons.Actions.Edit) {
+            override fun actionPerformed(e: AnActionEvent) {
+                openOrCreateScriptInBackground(ScriptPhase.POST, level, tag, endpoint, request)
+            }
+        })
+    }
+
+    private fun addCopyPathAction(group: DefaultActionGroup, endpoint: ApiEndpoint) {
+        group.add(object : AnAction("Copy Path", "Copy endpoint path to clipboard", AllIcons.Actions.Copy) {
+            override fun actionPerformed(e: AnActionEvent) {
+                val cb = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                cb.setContents(java.awt.datatransfer.StringSelection(endpoint.path), null)
+            }
+        })
+    }
+
     private fun openOrCreateScriptInBackground(
         phase: ScriptPhase,
         level: ScriptLevel,
@@ -192,18 +221,7 @@ class EndpointTree(private val project: Project) : Tree() {
     }
 
     private fun buildGlobalMenu(group: DefaultActionGroup) {
-        group.add(object : AnAction("Create Pre-Script (Global)",
-            "Create global pre.js that runs before every request", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.PRE, ScriptLevel.GLOBAL)
-            }
-        })
-        group.add(object : AnAction("Create Post-Script (Global)",
-            "Create global post.js that runs after every request", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.POST, ScriptLevel.GLOBAL)
-            }
-        })
+        addScriptPair(group, ScriptLevel.GLOBAL)
     }
 
     private fun buildCollectionMenu(group: DefaultActionGroup, collection: ApiCollection) {
@@ -225,33 +243,11 @@ class EndpointTree(private val project: Project) : Tree() {
         group.add(envGroup)
         group.add(Separator.getInstance())
 
-        group.add(object : AnAction("Create Pre-Script (Collection)", "", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.PRE, ScriptLevel.COLLECTION,
-                    tag = collection.id)
-            }
-        })
-        group.add(object : AnAction("Create Post-Script (Collection)", "", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.POST, ScriptLevel.COLLECTION,
-                    tag = collection.id)
-            }
-        })
+        addScriptPair(group, ScriptLevel.COLLECTION, tag = collection.id)
     }
 
     private fun buildControllerMenu(group: DefaultActionGroup, node: ControllerNode) {
-        group.add(object : AnAction("Create Pre-Script (Tag)",
-            "Create pre.js for this tag/controller", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.PRE, ScriptLevel.TAG, tag = node.name)
-            }
-        })
-        group.add(object : AnAction("Create Post-Script (Tag)",
-            "Create post.js for this tag/controller", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.POST, ScriptLevel.TAG, tag = node.name)
-            }
-        })
+        addScriptPair(group, ScriptLevel.TAG, tag = node.name)
     }
 
     private fun buildEndpointMenu(group: DefaultActionGroup, endpoint: ApiEndpoint) {
@@ -285,28 +281,10 @@ class EndpointTree(private val project: Project) : Tree() {
 
         group.add(Separator.getInstance())
 
-        group.add(object : AnAction("Copy Path", "Copy endpoint path to clipboard", AllIcons.Actions.Copy) {
-            override fun actionPerformed(e: AnActionEvent) {
-                val cb = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                cb.setContents(java.awt.datatransfer.StringSelection(endpoint.path), null)
-            }
-        })
-
+        addCopyPathAction(group, endpoint)
         group.add(Separator.getInstance())
-        group.add(object : AnAction("Create Pre-Script (Endpoint)",
-            "Create pre.js for this endpoint", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.PRE, ScriptLevel.ENDPOINT,
-                    tag = endpoint.tags.firstOrNull() ?: "Default", endpoint = endpoint)
-            }
-        })
-        group.add(object : AnAction("Create Post-Script (Endpoint)",
-            "Create post.js for this endpoint", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.POST, ScriptLevel.ENDPOINT,
-                    tag = endpoint.tags.firstOrNull() ?: "Default", endpoint = endpoint)
-            }
-        })
+        addScriptPair(group, ScriptLevel.ENDPOINT,
+            tag = endpoint.tags.firstOrNull() ?: "Default", endpoint = endpoint)
     }
 
     private fun buildRequestMenu(group: DefaultActionGroup, endpoint: ApiEndpoint, request: SavedRequest) {
@@ -351,30 +329,10 @@ class EndpointTree(private val project: Project) : Tree() {
 
         group.add(Separator.getInstance())
 
-        group.add(object : AnAction("Copy Path", "Copy endpoint path to clipboard", AllIcons.Actions.Copy) {
-            override fun actionPerformed(e: AnActionEvent) {
-                val cb = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                cb.setContents(java.awt.datatransfer.StringSelection(endpoint.path), null)
-            }
-        })
-
+        addCopyPathAction(group, endpoint)
         group.add(Separator.getInstance())
-        group.add(object : AnAction("Create Pre-Script (Request)",
-            "Create pre.js for this specific request", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.PRE, ScriptLevel.REQUEST,
-                    tag = endpoint.tags.firstOrNull() ?: "Default",
-                    endpoint = endpoint, request = request)
-            }
-        })
-        group.add(object : AnAction("Create Post-Script (Request)",
-            "Create post.js for this specific request", AllIcons.Actions.Edit) {
-            override fun actionPerformed(e: AnActionEvent) {
-                openOrCreateScriptInBackground(ScriptPhase.POST, ScriptLevel.REQUEST,
-                    tag = endpoint.tags.firstOrNull() ?: "Default",
-                    endpoint = endpoint, request = request)
-            }
-        })
+        addScriptPair(group, ScriptLevel.REQUEST,
+            tag = endpoint.tags.firstOrNull() ?: "Default", endpoint = endpoint, request = request)
     }
 
     // ── Tree building ─────────────────────────────────────────────────────────
@@ -499,6 +457,18 @@ class EndpointTree(private val project: Project) : Tree() {
     }
 }
 
+// ── Shared UI helpers ─────────────────────────────────────────────────────────
+
+internal fun methodColor(method: HttpMethod): Color = when (method) {
+    HttpMethod.GET     -> JBColor(Color(0x00, 0xAA, 0x55), Color(0x4C, 0xC4, 0x7F))
+    HttpMethod.POST    -> JBColor(Color(0x00, 0x77, 0xDD), Color(0x44, 0x99, 0xFF))
+    HttpMethod.PUT     -> JBColor(Color(0xCC, 0x66, 0x00), Color(0xFF, 0x99, 0x33))
+    HttpMethod.DELETE  -> JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x44, 0x44))
+    HttpMethod.PATCH   -> JBColor(Color(0x88, 0x00, 0xCC), Color(0xBB, 0x44, 0xFF))
+    HttpMethod.HEAD    -> JBColor(Color(0x44, 0x44, 0x88), Color(0x88, 0x88, 0xCC))
+    HttpMethod.OPTIONS -> JBColor(Color(0x44, 0x44, 0x44), Color(0x88, 0x88, 0x88))
+}
+
 // ── Cell renderer ─────────────────────────────────────────────────────────────
 
 private class EndpointTreeCellRenderer(private val project: Project) : ColoredTreeCellRenderer() {
@@ -564,13 +534,4 @@ private class EndpointTreeCellRenderer(private val project: Project) : ColoredTr
         }
     }
 
-    private fun methodColor(method: HttpMethod): Color = when (method) {
-        HttpMethod.GET     -> JBColor(Color(0x00, 0xAA, 0x55), Color(0x4C, 0xC4, 0x7F))
-        HttpMethod.POST    -> JBColor(Color(0x00, 0x77, 0xDD), Color(0x44, 0x99, 0xFF))
-        HttpMethod.PUT     -> JBColor(Color(0xCC, 0x66, 0x00), Color(0xFF, 0x99, 0x33))
-        HttpMethod.DELETE  -> JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x44, 0x44))
-        HttpMethod.PATCH   -> JBColor(Color(0x88, 0x00, 0xCC), Color(0xBB, 0x44, 0xFF))
-        HttpMethod.HEAD    -> JBColor(Color(0x44, 0x44, 0x88), Color(0x88, 0x88, 0xCC))
-        HttpMethod.OPTIONS -> JBColor(Color(0x44, 0x44, 0x44), Color(0x88, 0x88, 0x88))
-    }
 }

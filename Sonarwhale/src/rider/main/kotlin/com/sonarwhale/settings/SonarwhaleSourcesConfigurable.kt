@@ -43,32 +43,30 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
 
     private val service: CollectionService get() = CollectionService.getInstance(project)
 
-    // Local working copy — changes committed only on apply()
     private var collections: MutableList<ApiCollection> = mutableListOf()
-    private var selectedIdx = -1
+    private var originalIds: Set<String> = emptySet()
     private var modified = false
-    private var suppressListener = false
+    private var suppressingListener = false
 
     private val listModel = DefaultListModel<String>()
     private val collectionList = JBList(listModel).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
     }
 
-    // Detail fields
-    private val nameField       = JTextField()
-    private val radioServer     = JRadioButton("Server URL")
-    private val radioFile       = JRadioButton("File path")
-    private val radioStatic     = JRadioButton("Static JSON")
-    @Suppress("UNUSED_VARIABLE")
-    private val sourceGroup     = ButtonGroup().also { it.add(radioServer); it.add(radioFile); it.add(radioStatic) }
+    private val nameField        = JTextField()
+    private val radioServer      = JRadioButton("Server URL")
+    private val radioFile        = JRadioButton("File path")
+    private val radioStatic      = JRadioButton("Static JSON")
+    @Suppress("unused") // must be a field — ButtonGroup would be GC'd if local
+    private val sourceGroup      = ButtonGroup().also { it.add(radioServer); it.add(radioFile); it.add(radioStatic) }
     private val sourceCardLayout = CardLayout()
-    private val sourceCards     = JPanel(sourceCardLayout)
+    private val sourceCards      = JPanel(sourceCardLayout)
 
-    private val hostField       = JTextField("http://localhost")
-    private val portSpinner     = JSpinner(SpinnerNumberModel(5000, 1, 65535, 1))
-    private val pathField       = JTextField().also { it.toolTipText = "Leave empty for auto-discovery" }
-    private val filePathField   = TextFieldWithBrowseButton()
-    private val staticArea      = JTextArea(10, 40).also {
+    private val hostField      = JTextField("http://localhost")
+    private val portSpinner    = JSpinner(SpinnerNumberModel(5000, 1, 65535, 1))
+    private val pathField      = JTextField().also { it.toolTipText = "Leave empty for auto-discovery" }
+    private val filePathField  = TextFieldWithBrowseButton()
+    private val staticArea     = JTextArea(10, 40).also {
         it.font = Font(Font.MONOSPACED, Font.PLAIN, 11)
         it.lineWrap = false
         it.toolTipText = "Paste your OpenAPI JSON here"
@@ -88,16 +86,15 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         buildSourceCards()
 
         collectionList.addListSelectionListener { e ->
-            if (!e.valueIsAdjusting && !suppressListener) {
+            if (!e.valueIsAdjusting && !suppressingListener) {
                 saveCurrentToCollection()
-                selectedIdx = collectionList.selectedIndex
-                loadCollection()
+                loadCollection(collectionList.selectedIndex)
             }
         }
 
-        radioServer.addActionListener { sourceCardLayout.show(sourceCards, "server"); modified = true }
-        radioFile.addActionListener   { sourceCardLayout.show(sourceCards, "file");   modified = true }
-        radioStatic.addActionListener { sourceCardLayout.show(sourceCards, "static"); modified = true }
+        addSourceTypeListener(radioServer, CARD_SERVER)
+        addSourceTypeListener(radioFile,   CARD_FILE)
+        addSourceTypeListener(radioStatic, CARD_STATIC)
 
         val root = JPanel(BorderLayout(8, 0))
         root.add(buildListPanel(), BorderLayout.WEST)
@@ -109,27 +106,23 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
 
     override fun apply() {
         saveCurrentToCollection()
-        val serviceIds = service.getAll().map { it.id }.toSet()
         for (col in collections) {
-            if (col.id in serviceIds) service.update(col) else service.add(col)
+            if (col.id in originalIds) service.update(col) else service.add(col)
         }
-        serviceIds.filter { id -> collections.none { it.id == id } }.forEach { service.remove(it) }
+        originalIds.filter { id -> collections.none { it.id == id } }.forEach { service.remove(it) }
+        originalIds = collections.map { it.id }.toSet()
         modified = false
     }
 
     override fun reset() {
         collections = service.getAll().toMutableList()
-        suppressListener = true
-        listModel.clear()
-        collections.forEach { listModel.addElement(it.name) }
-        selectedIdx = if (collections.isNotEmpty()) 0 else -1
-        if (selectedIdx >= 0) {
-            collectionList.selectedIndex = selectedIdx
-            loadCollection()
-        } else {
-            clearDetail()
+        originalIds = collections.map { it.id }.toSet()
+        withSuppressedListener {
+            listModel.clear()
+            collections.forEach { listModel.addElement(it.name) }
+            if (collections.isNotEmpty()) collectionList.selectedIndex = 0
         }
-        suppressListener = false
+        loadCollection(collectionList.selectedIndex)
         modified = false
     }
 
@@ -173,11 +166,8 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         )
         collections.add(col)
         listModel.addElement(col.name)
-        suppressListener = true
-        collectionList.selectedIndex = collections.size - 1
-        suppressListener = false
-        selectedIdx = collections.size - 1
-        loadCollection()
+        withSuppressedListener { collectionList.selectedIndex = collections.size - 1 }
+        loadCollection(collectionList.selectedIndex)
         modified = true
     }
 
@@ -192,11 +182,8 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         collections.removeAt(idx)
         listModel.removeElementAt(idx)
         val newIdx = if (collections.isEmpty()) -1 else (idx - 1).coerceAtLeast(0)
-        selectedIdx = newIdx
-        suppressListener = true
-        if (newIdx >= 0) collectionList.selectedIndex = newIdx
-        suppressListener = false
-        if (newIdx >= 0) loadCollection() else clearDetail()
+        withSuppressedListener { if (newIdx >= 0) collectionList.selectedIndex = newIdx }
+        loadCollection(newIdx)
         modified = true
     }
 
@@ -238,7 +225,6 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
     }
 
     private fun buildSourceCards() {
-        // Server URL card
         val serverPanel = JPanel(GridBagLayout())
         serverPanel.border = JBUI.Borders.empty(6, 0)
         val sg = GridBagConstraints().also { it.fill = GridBagConstraints.HORIZONTAL; it.insets = Insets(2, 4, 2, 4) }
@@ -255,7 +241,6 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
             foreground = JBColor.GRAY; font = font.deriveFont(10f)
         }, sg)
 
-        // File path card
         val filePanel = JPanel(GridBagLayout())
         filePanel.border = JBUI.Borders.empty(6, 0)
         val fg = GridBagConstraints().also { it.fill = GridBagConstraints.HORIZONTAL; it.insets = Insets(2, 4, 2, 4) }
@@ -266,7 +251,6 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
             foreground = JBColor.GRAY; font = font.deriveFont(10f)
         }, fg)
 
-        // Static JSON card
         val staticPanel = JPanel(BorderLayout(0, 4))
         staticPanel.border = JBUI.Borders.empty(6, 4)
         staticPanel.add(JBLabel("Paste OpenAPI JSON:").apply {
@@ -274,67 +258,86 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         }, BorderLayout.NORTH)
         staticPanel.add(JScrollPane(staticArea).also { it.preferredSize = JBUI.size(400, 160) }, BorderLayout.CENTER)
 
-        sourceCards.add(serverPanel, "server")
-        sourceCards.add(filePanel,   "file")
-        sourceCards.add(staticPanel, "static")
+        sourceCards.add(serverPanel, CARD_SERVER)
+        sourceCards.add(filePanel,   CARD_FILE)
+        sourceCards.add(staticPanel, CARD_STATIC)
     }
 
     // ── Load / save helpers ───────────────────────────────────────────────────
 
-    private fun loadCollection() {
-        val col = collections.getOrNull(selectedIdx) ?: run { clearDetail(); return }
-        val source = col.environments.firstOrNull { it.id == col.activeEnvironmentId }?.source
-            ?: col.environments.firstOrNull()?.source
-            ?: EnvironmentSource.ServerUrl("http://localhost", 5000)
+    private fun loadCollection(idx: Int) {
+        val col = collections.getOrNull(idx) ?: run { clearDetail(); return }
         nameField.text = col.name
-        when (source) {
+        when (val source = activeSourceOf(col)) {
             is EnvironmentSource.ServerUrl -> {
-                radioServer.isSelected = true; sourceCardLayout.show(sourceCards, "server")
+                radioServer.isSelected = true; sourceCardLayout.show(sourceCards, CARD_SERVER)
                 hostField.text = source.host; portSpinner.value = source.port
                 pathField.text = source.openApiPath ?: ""
             }
             is EnvironmentSource.FilePath -> {
-                radioFile.isSelected = true; sourceCardLayout.show(sourceCards, "file")
+                radioFile.isSelected = true; sourceCardLayout.show(sourceCards, CARD_FILE)
                 filePathField.text = source.path
             }
             is EnvironmentSource.StaticImport -> {
-                radioStatic.isSelected = true; sourceCardLayout.show(sourceCards, "static")
+                radioStatic.isSelected = true; sourceCardLayout.show(sourceCards, CARD_STATIC)
                 staticArea.text = source.cachedContent
             }
         }
     }
 
     private fun saveCurrentToCollection() {
-        val col = collections.getOrNull(selectedIdx) ?: return
+        val idx = collectionList.selectedIndex.takeIf { it >= 0 } ?: return
+        val col = collections.getOrNull(idx) ?: return
         val name = nameField.text.trim().ifEmpty { col.name }
-        val source: EnvironmentSource = when {
-            radioServer.isSelected -> EnvironmentSource.ServerUrl(
-                host = hostField.text.trim().ifEmpty { "http://localhost" },
-                port = portSpinner.value as Int,
-                openApiPath = pathField.text.trim().ifEmpty { null }
-            )
-            radioFile.isSelected -> EnvironmentSource.FilePath(path = filePathField.text.trim())
-            else -> EnvironmentSource.StaticImport(cachedContent = staticArea.text.trim())
-        }
-        // Preserve all other environments; update only the active (primary) source env
+        val source = buildSourceFromUI()
         val envs = col.environments.toMutableList()
-        val activeEnvIdx = envs.indexOfFirst { it.id == col.activeEnvironmentId }
-            .takeIf { it >= 0 } ?: 0
+        val activeEnvIdx = envs.indexOfFirst { it.id == col.activeEnvironmentId }.takeIf { it >= 0 } ?: 0
         if (envs.isEmpty()) {
             envs.add(CollectionEnvironment(id = UUID.randomUUID().toString(), name = "default", source = source))
         } else {
             envs[activeEnvIdx] = envs[activeEnvIdx].copy(source = source)
         }
-        if (listModel.size > selectedIdx && listModel.getElementAt(selectedIdx) != name) {
-            listModel.setElementAt(name, selectedIdx)
-            modified = true
-        }
-        collections[selectedIdx] = col.copy(name = name, environments = envs)
+        val updated = col.copy(name = name, environments = envs)
+        if (updated != col) modified = true
+        if (listModel.size > idx && listModel.getElementAt(idx) != name) listModel.setElementAt(name, idx)
+        collections[idx] = updated
     }
+
+    private fun buildSourceFromUI(): EnvironmentSource = when {
+        radioServer.isSelected -> EnvironmentSource.ServerUrl(
+            host = hostField.text.trim().ifEmpty { "http://localhost" },
+            port = portSpinner.value as Int,
+            openApiPath = pathField.text.trim().ifEmpty { null }
+        )
+        radioFile.isSelected -> EnvironmentSource.FilePath(path = filePathField.text.trim())
+        else -> EnvironmentSource.StaticImport(cachedContent = staticArea.text.trim())
+    }
+
+    private fun activeSourceOf(col: ApiCollection): EnvironmentSource =
+        col.environments.firstOrNull { it.id == col.activeEnvironmentId }?.source
+            ?: col.environments.firstOrNull()?.source
+            ?: EnvironmentSource.ServerUrl("http://localhost", 5000)
 
     private fun clearDetail() {
         nameField.text = ""; hostField.text = "http://localhost"; portSpinner.value = 5000
         pathField.text = ""; filePathField.text = ""; staticArea.text = ""
-        radioServer.isSelected = true; sourceCardLayout.show(sourceCards, "server")
+        radioServer.isSelected = true; sourceCardLayout.show(sourceCards, CARD_SERVER)
+    }
+
+    // ── Utilities ─────────────────────────────────────────────────────────────
+
+    private fun withSuppressedListener(block: () -> Unit) {
+        suppressingListener = true
+        try { block() } finally { suppressingListener = false }
+    }
+
+    private fun addSourceTypeListener(radio: JRadioButton, card: String) {
+        radio.addActionListener { sourceCardLayout.show(sourceCards, card); modified = true }
+    }
+
+    companion object {
+        private const val CARD_SERVER = "server"
+        private const val CARD_FILE   = "file"
+        private const val CARD_STATIC = "static"
     }
 }

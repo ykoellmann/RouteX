@@ -13,7 +13,6 @@ import com.sonarwhale.SonarwhaleStateService
 import com.sonarwhale.gutter.SourceLocationService
 import com.sonarwhale.model.ApiEndpoint
 import com.sonarwhale.model.AuthType
-import com.sonarwhale.model.HttpMethod
 import com.sonarwhale.model.SavedRequest
 import com.sonarwhale.service.RouteIndexService
 import java.awt.BorderLayout
@@ -122,23 +121,25 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()), DataPr
         if (endpoint == null) {
             headerHolder.isVisible = false
             cardLayout.show(cardPanel, "empty")
+            revalidate(); repaint()
         } else {
-            showHeader(endpoint)
             requestPanel.setPreviewMode(true)
             splitter.secondComponent = null
             requestPanel.showEndpoint(endpoint)
-            responsePanel.clear()
-            cardLayout.show(cardPanel, "content")
+            showContent(endpoint)
         }
-        revalidate(); repaint()
     }
 
     /** Called when a request sub-node is selected in the tree. */
     fun showRequest(endpoint: ApiEndpoint, request: SavedRequest) {
-        showHeader(endpoint)
         requestPanel.setPreviewMode(false)
         splitter.secondComponent = responsePanel
         requestPanel.showRequest(endpoint, request)
+        showContent(endpoint)
+    }
+
+    private fun showContent(endpoint: ApiEndpoint) {
+        showHeader(endpoint)
         responsePanel.clear()
         cardLayout.show(cardPanel, "content")
         revalidate(); repaint()
@@ -184,7 +185,7 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()), DataPr
 
         val badge = JBLabel(endpoint.method.name).apply {
             font = Font(Font.MONOSPACED, Font.BOLD, 11)
-            foreground = httpMethodColor(endpoint.method)
+            foreground = methodColor(endpoint.method)
             border = JBUI.Borders.empty(1, 0, 1, 10)
         }
         gbc.gridx = 0; gbc.weightx = 0.0; gbc.insets = Insets(0, 0, 0, 0)
@@ -246,13 +247,4 @@ class DetailPanel(private val project: Project) : JPanel(BorderLayout()), DataPr
         foreground = JBColor.GRAY; border = JBUI.Borders.empty(0, 4)
     }
 
-    private fun httpMethodColor(method: HttpMethod): Color = when (method) {
-        HttpMethod.GET     -> JBColor(Color(0x00, 0xAA, 0x55), Color(0x4C, 0xC4, 0x7F))
-        HttpMethod.POST    -> JBColor(Color(0x00, 0x77, 0xDD), Color(0x44, 0x99, 0xFF))
-        HttpMethod.PUT     -> JBColor(Color(0xCC, 0x66, 0x00), Color(0xFF, 0x99, 0x33))
-        HttpMethod.DELETE  -> JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x44, 0x44))
-        HttpMethod.PATCH   -> JBColor(Color(0x88, 0x00, 0xCC), Color(0xBB, 0x44, 0xFF))
-        HttpMethod.HEAD    -> JBColor(Color(0x44, 0x44, 0x88), Color(0x88, 0x88, 0xCC))
-        HttpMethod.OPTIONS -> JBColor(Color(0x55, 0x55, 0x55), Color(0x88, 0x88, 0x88))
-    }
 }

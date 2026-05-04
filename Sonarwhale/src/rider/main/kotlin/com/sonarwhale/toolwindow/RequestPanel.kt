@@ -206,7 +206,7 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
         section.add(javax.swing.Box.createVerticalStrut(12))
         section.add(com.intellij.ui.components.JBLabel("Disable inherited:").apply { alignmentX = java.awt.Component.LEFT_ALIGNMENT })
         section.add(javax.swing.Box.createVerticalStrut(4))
-        section.add(buildToggleGrid(levels, requestPreChecks, requestPostChecks) { saveRequestToggles() })
+        section.add(buildScriptToggleGrid(levels, requestPreChecks, requestPostChecks, onChanged = { saveRequestToggles() }))
 
         scriptsToggleSection = section
         scriptsPanel.add(section)
@@ -226,41 +226,6 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                 scriptPostBtn.font = scriptPostBtn.font.deriveFont(if (postExists) Font.BOLD else Font.PLAIN)
             }
         }
-    }
-
-    private fun buildToggleGrid(
-        levels: List<ScriptLevel>,
-        preChecks: MutableMap<ScriptLevel, javax.swing.JCheckBox>,
-        postChecks: MutableMap<ScriptLevel, javax.swing.JCheckBox>,
-        onChanged: () -> Unit
-    ): JPanel {
-        val grid = JPanel(GridBagLayout())
-        grid.alignmentX = java.awt.Component.LEFT_ALIGNMENT
-        val gbc = GridBagConstraints().apply {
-            anchor = GridBagConstraints.WEST
-            insets = Insets(1, 0, 1, 12)
-        }
-        // Row 0: header row — empty label + one level name per column
-        gbc.gridy = 0; gbc.gridx = 0; grid.add(JPanel(), gbc)
-        levels.forEachIndexed { i, level ->
-            gbc.gridx = i + 1
-            grid.add(com.intellij.ui.components.JBLabel(level.name.lowercase().replaceFirstChar { it.uppercase() }), gbc)
-        }
-        // Row 1: Pre row
-        gbc.gridy = 1; gbc.gridx = 0; grid.add(com.intellij.ui.components.JBLabel("Pre"), gbc)
-        levels.forEachIndexed { i, level ->
-            val cb = javax.swing.JCheckBox().apply { isSelected = true; addActionListener { onChanged() } }
-            preChecks[level] = cb
-            gbc.gridx = i + 1; grid.add(cb, gbc)
-        }
-        // Row 2: Post row
-        gbc.gridy = 2; gbc.gridx = 0; grid.add(com.intellij.ui.components.JBLabel("Post"), gbc)
-        levels.forEachIndexed { i, level ->
-            val cb = javax.swing.JCheckBox().apply { isSelected = true; addActionListener { onChanged() } }
-            postChecks[level] = cb
-            gbc.gridx = i + 1; grid.add(cb, gbc)
-        }
-        return grid
     }
 
     private fun saveRequestToggles() {
@@ -658,22 +623,7 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
 
                 // ── HTTP Request ───────────────────────────────────────────────
                 val generalSettings = stateService.getGeneralSettings()
-                val clientBuilder = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .followRedirects(
-                        if (generalSettings.followRedirects) HttpClient.Redirect.NORMAL
-                        else HttpClient.Redirect.NEVER
-                    )
-                if (!generalSettings.verifySsl) {
-                    val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
-                        override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-                        override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-                        override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-                    })
-                    val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS").also { it.init(null, trustAll, null) }
-                    clientBuilder.sslContext(sslCtx)
-                }
-                val client = clientBuilder.build()
+                val client = buildHttpClient(generalSettings)
                 val builder = HttpRequest.newBuilder()
                     .uri(URI.create(finalUrl))
                     .timeout(Duration.ofSeconds(generalSettings.requestTimeoutSeconds.toLong()))
@@ -685,57 +635,7 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                 finalHeaders.forEach { (k, v) -> runCatching { builder.header(k, v) } }
                 val hasContentType = finalHeaders.keys.any { it.equals("content-type", ignoreCase = true) }
 
-                when (val bc = bodyContent) {
-                    is BodyContent.None -> if (finalBody.isNotEmpty()) {
-                        // Pre-script injected a body — send it even though the body panel is empty
-                        if (!hasContentType) builder.header("Content-Type", "application/json")
-                        val publisher = HttpRequest.BodyPublishers.ofString(finalBody)
-                        when (endpoint.method.name) {
-                            "POST"        -> builder.POST(publisher)
-                            "PUT"         -> builder.PUT(publisher)
-                            "DELETE"      -> builder.DELETE()
-                            "GET", "HEAD" -> builder.GET()
-                            else          -> builder.method(endpoint.method.name, publisher)
-                        }
-                    } else when (endpoint.method.name) {
-                        "GET", "HEAD" -> builder.GET()
-                        "DELETE"      -> builder.DELETE()
-                        else          -> builder.method(endpoint.method.name, HttpRequest.BodyPublishers.noBody())
-                    }
-                    is BodyContent.Raw -> {
-                        if (!hasContentType) builder.header("Content-Type", bc.contentType)
-                        val publisher = HttpRequest.BodyPublishers.ofString(finalBody)
-                        when (endpoint.method.name) {
-                            "POST"        -> builder.POST(publisher)
-                            "PUT"         -> builder.PUT(publisher)
-                            "DELETE"      -> builder.DELETE()
-                            "GET", "HEAD" -> builder.GET()
-                            else          -> builder.method(endpoint.method.name, publisher)
-                        }
-                    }
-                    is BodyContent.FormData -> {
-                        if (!hasContentType) builder.header("Content-Type", "application/x-www-form-urlencoded")
-                        val encoded = bc.rows.filter { it.enabled && it.key.isNotEmpty() }
-                            .joinToString("&") {
-                                "${URLEncoder.encode(it.key, "UTF-8")}=${URLEncoder.encode(it.value, "UTF-8")}"
-                            }
-                        val publisher = HttpRequest.BodyPublishers.ofString(encoded)
-                        when (endpoint.method.name) {
-                            "POST" -> builder.POST(publisher)
-                            "PUT"  -> builder.PUT(publisher)
-                            else   -> builder.method(endpoint.method.name, publisher)
-                        }
-                    }
-                    is BodyContent.Binary -> {
-                        val path = Paths.get(bc.filePath)
-                        val publisher = HttpRequest.BodyPublishers.ofFile(path)
-                        when (endpoint.method.name) {
-                            "POST" -> builder.POST(publisher)
-                            "PUT"  -> builder.PUT(publisher)
-                            else   -> builder.method(endpoint.method.name, publisher)
-                        }
-                    }
-                }
+                applyBodyToRequest(builder, bodyContent, endpoint, finalBody, hasContentType)
 
                 val start = System.currentTimeMillis()
                 val response = try {
@@ -794,6 +694,87 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                 }
             }
         }.execute()
+    }
+
+    // ── HTTP helpers ──────────────────────────────────────────────────────────
+
+    private fun buildHttpClient(settings: com.sonarwhale.model.SonarwhaleGeneralSettings): HttpClient {
+        val builder = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(
+                if (settings.followRedirects) HttpClient.Redirect.NORMAL
+                else HttpClient.Redirect.NEVER
+            )
+        if (!settings.verifySsl) {
+            val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+            })
+            val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS").also { it.init(null, trustAll, null) }
+            builder.sslContext(sslCtx)
+        }
+        return builder.build()
+    }
+
+    private fun applyBodyToRequest(
+        builder: HttpRequest.Builder,
+        bodyContent: BodyContent,
+        endpoint: com.sonarwhale.model.ApiEndpoint,
+        finalBody: String,
+        hasContentType: Boolean
+    ) {
+        when (val bc = bodyContent) {
+            is BodyContent.None -> if (finalBody.isNotEmpty()) {
+                // Pre-script injected a body — send it even though the body panel is empty
+                if (!hasContentType) builder.header("Content-Type", "application/json")
+                val publisher = HttpRequest.BodyPublishers.ofString(finalBody)
+                when (endpoint.method.name) {
+                    "POST"        -> builder.POST(publisher)
+                    "PUT"         -> builder.PUT(publisher)
+                    "DELETE"      -> builder.DELETE()
+                    "GET", "HEAD" -> builder.GET()
+                    else          -> builder.method(endpoint.method.name, publisher)
+                }
+            } else when (endpoint.method.name) {
+                "GET", "HEAD" -> builder.GET()
+                "DELETE"      -> builder.DELETE()
+                else          -> builder.method(endpoint.method.name, HttpRequest.BodyPublishers.noBody())
+            }
+            is BodyContent.Raw -> {
+                if (!hasContentType) builder.header("Content-Type", bc.contentType)
+                val publisher = HttpRequest.BodyPublishers.ofString(finalBody)
+                when (endpoint.method.name) {
+                    "POST"        -> builder.POST(publisher)
+                    "PUT"         -> builder.PUT(publisher)
+                    "DELETE"      -> builder.DELETE()
+                    "GET", "HEAD" -> builder.GET()
+                    else          -> builder.method(endpoint.method.name, publisher)
+                }
+            }
+            is BodyContent.FormData -> {
+                if (!hasContentType) builder.header("Content-Type", "application/x-www-form-urlencoded")
+                val encoded = bc.rows.filter { it.enabled && it.key.isNotEmpty() }
+                    .joinToString("&") {
+                        "${URLEncoder.encode(it.key, "UTF-8")}=${URLEncoder.encode(it.value, "UTF-8")}"
+                    }
+                val publisher = HttpRequest.BodyPublishers.ofString(encoded)
+                when (endpoint.method.name) {
+                    "POST" -> builder.POST(publisher)
+                    "PUT"  -> builder.PUT(publisher)
+                    else   -> builder.method(endpoint.method.name, publisher)
+                }
+            }
+            is BodyContent.Binary -> {
+                val path = Paths.get(bc.filePath)
+                val publisher = HttpRequest.BodyPublishers.ofFile(path)
+                when (endpoint.method.name) {
+                    "POST" -> builder.POST(publisher)
+                    "PUT"  -> builder.PUT(publisher)
+                    else   -> builder.method(endpoint.method.name, publisher)
+                }
+            }
+        }
     }
 
     // ── Error helpers ─────────────────────────────────────────────────────────
