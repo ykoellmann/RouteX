@@ -1,5 +1,32 @@
 # Sonarwhale TODO
 
+## Freemium Model (Foundation)
+
+### Architecture & Licensing
+- Integrate JetBrains Marketplace licensing API (isLicensed checks)
+- Define productCode, release-date, release-version in plugin.xml
+- Add license verification calls in plugin startup/feature access
+- Create @Premium annotation for gating premium features
+- Local state storage in `.idea/` (no cloud, no accounts)
+
+### Free Tier Features
+- Endpoint discovery ✓ (already done)
+- Basic request execution ✓ (already done)
+- Gutter icons ✓ (already done)
+- 1 environment (default)
+- Postman import ✓ (auto-enable)
+- Last 10 requests history
+
+### Premium Tier Features
+- **Request History & Collections Management** — unlimited history, groupable/searchable collections
+- **Pre/Post Scripts** — JavaScript automation (sw.test, sw.env, sw.request, sw.response)
+- **Response Assertions & Test Suite** — test() helpers, assertions tab, test history
+- **Unlimited Environments** — switch between dev/staging/prod with full vars
+- **Endpoint Diff Tracking** — see added/modified/removed endpoints on refresh
+- **Auth Helpers** — pre-built OAuth2, JWT, API Key templates for scripts
+- **Team Features** — shared environments, collection sharing (future: workspace)
+- **Postman Export** — export collections + environments + scripts
+
 ## Code Quality
 
 ### Medium priority
