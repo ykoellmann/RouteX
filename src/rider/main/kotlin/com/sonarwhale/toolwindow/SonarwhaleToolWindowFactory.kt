@@ -10,18 +10,23 @@ import com.sonarwhale.service.RouteIndexService
 class SonarwhaleToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val panel = SonarwhalePanel(project)
-        val content = ContentFactory.getInstance().createContent(panel, "", false)
-        toolWindow.contentManager.addContent(content)
+        // Panel may have been created eagerly at startup so the run-request listener
+        // is active before the user opens the tool window for the first time.
+        if (toolWindow.contentManager.contentCount > 0) return
 
-        val service = RouteIndexService.getInstance(project)
-
-        // Seed with whatever the service already has cached (e.g. from startup activity)
-        panel.updateEndpoints(service.endpoints)
-
-        // SonarwhalePanel.init already registered an endpoint listener; trigger the initial scan.
-        service.refresh()
+        initContent(project, toolWindow)
     }
 
     override fun isApplicable(project: Project): Boolean = true
+
+    companion object {
+        fun initContent(project: Project, toolWindow: ToolWindow) {
+            val service = RouteIndexService.getInstance(project)
+            val panel   = SonarwhalePanel(project)
+            val content = ContentFactory.getInstance().createContent(panel, "", false)
+            toolWindow.contentManager.addContent(content)
+            panel.updateEndpoints(service.endpoints)
+            service.refresh()
+        }
+    }
 }

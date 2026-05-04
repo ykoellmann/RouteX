@@ -59,6 +59,9 @@
     <!-- Trigger initial OpenAPI fetch after project opens -->
     <postStartupActivity implementation="com.sonarwhale.SonarwhaleStartupActivity"/>
 
+    <!-- Notification group for silent gutter-icon request results -->
+    <notificationGroup id="Sonarwhale" displayType="BALLOON" isLogByDefault="false"/>
+
     <!-- Settings pages under Tools > Sonarwhale -->
     <projectConfigurable
         parentId="tools"

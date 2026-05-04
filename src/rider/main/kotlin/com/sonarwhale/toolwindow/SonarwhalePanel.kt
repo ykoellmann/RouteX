@@ -1,12 +1,16 @@
 package com.sonarwhale.toolwindow
 
 import com.intellij.icons.AllIcons
+import com.intellij.notification.NotificationAction
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBScrollPane
@@ -88,8 +92,30 @@ class SonarwhalePanel(private val project: Project) : JPanel(BorderLayout()) {
             val endpoint = service.endpoints.firstOrNull { it.id == endpointId } ?: return@addRunRequestListener
             val request = SonarwhaleStateService.getInstance(project).getRequest(endpointId, requestId)
             if (request != null) {
+                val toolWindowVisible = ToolWindowManager.getInstance(project)
+                    .getToolWindow("Sonarwhale")?.isVisible == true
                 endpointTree.selectRequest(endpointId, requestId)
                 detailPanel.showRequest(endpoint, request)
+                if (!toolWindowVisible) {
+                    detailPanel.requestPanel.onNextResponse = { status, _, _, _ ->
+                        val (type, emoji) = when {
+                            status in 200..299 -> NotificationType.INFORMATION to "✓"
+                            status == 0        -> NotificationType.ERROR to "✗"
+                            else               -> NotificationType.WARNING to "!"
+                        }
+                        NotificationGroupManager.getInstance()
+                            .getNotificationGroup("Sonarwhale")
+                            .createNotification(
+                                "$emoji ${endpoint.method.name} ${endpoint.path} — $status",
+                                type
+                            )
+                            .addAction(NotificationAction.createSimpleExpiring("Show response") {
+                                ToolWindowManager.getInstance(project)
+                                    .getToolWindow("Sonarwhale")?.show(null)
+                            })
+                            .notify(project)
+                    }
+                }
                 detailPanel.requestPanel.triggerSend()
             } else {
                 endpointTree.selectEndpoint(endpointId)

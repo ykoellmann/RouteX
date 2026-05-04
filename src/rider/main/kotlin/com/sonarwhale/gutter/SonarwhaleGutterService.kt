@@ -187,15 +187,16 @@ class SonarwhaleGutterService(private val project: Project) : Disposable {
 
         override fun getClickAction() = object : com.intellij.openapi.actionSystem.AnAction() {
             override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
-                ToolWindowManager.getInstance(project).getToolWindow("Sonarwhale")?.show(null)
-
                 val stateService = SonarwhaleStateService.getInstance(project)
                 val defaultReq   = stateService.getDefaultRequest(endpoint.id)
-
                 val indexService = RouteIndexService.getInstance(project)
+
                 if (defaultReq != null) {
+                    // Run silently — panel opens only if already visible; notification shows the result
                     indexService.runRequest(endpoint.id, defaultReq.id)
                 } else {
+                    // No saved request to run — open panel so the user can configure one
+                    ToolWindowManager.getInstance(project).getToolWindow("Sonarwhale")?.show(null)
                     indexService.selectEndpoint(endpoint.id)
                 }
             }

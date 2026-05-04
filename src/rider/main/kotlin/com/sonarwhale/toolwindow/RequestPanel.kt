@@ -118,6 +118,8 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
     var onDefaultStateChanged: ((Boolean) -> Unit)? = null
     var onTestResultsReceived: ((List<TestResult>) -> Unit)? = null
     var onConsoleReceived: ((List<com.sonarwhale.script.ConsoleEntry>) -> Unit)? = null
+    /** One-shot callback fired on the next response (success or error), then cleared. */
+    var onNextResponse: ((Int, String, Long, String) -> Unit)? = null
 
     /** Called by DetailPanel when the user edits the name field in the header. */
     fun setRequestName(name: String) { currentRequestName = name }
@@ -685,10 +687,12 @@ class RequestPanel(private val project: Project) : JPanel(BorderLayout()) {
                     val (status, body, duration) = result.first
                     val contentType = result.second
                     onResponseReceived?.invoke(status, body, duration, contentType)
+                    onNextResponse?.also { it(status, body, duration, contentType); onNextResponse = null }
                     onTestResultsReceived?.invoke(testResults)
                     onConsoleReceived?.invoke(consoleOutput.entries)
                 }.onFailure { e ->
                     onResponseReceived?.invoke(0, describeError(e), 0, "")
+                    onNextResponse?.also { it(0, describeError(e), 0, ""); onNextResponse = null }
                     onTestResultsReceived?.invoke(emptyList())
                     onConsoleReceived?.invoke(consoleOutput.entries)
                 }
