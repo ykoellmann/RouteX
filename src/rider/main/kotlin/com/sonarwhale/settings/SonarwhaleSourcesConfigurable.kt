@@ -96,6 +96,18 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         addSourceTypeListener(radioFile,   CARD_FILE)
         addSourceTypeListener(radioStatic, CARD_STATIC)
 
+        val markModified = object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) { modified = true }
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) { modified = true }
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) { modified = true }
+        }
+        nameField.document.addDocumentListener(markModified)
+        hostField.document.addDocumentListener(markModified)
+        pathField.document.addDocumentListener(markModified)
+        filePathField.textField.document.addDocumentListener(markModified)
+        portSpinner.addChangeListener { modified = true }
+        staticArea.document.addDocumentListener(markModified)
+
         val root = JPanel(BorderLayout(8, 0))
         root.add(buildListPanel(), BorderLayout.WEST)
         root.add(buildDetailPanel(), BorderLayout.CENTER)
