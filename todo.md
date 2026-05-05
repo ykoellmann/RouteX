@@ -2,6 +2,8 @@
 
 ## Freemium Model (Foundation)
 
+### Silas ist Hier
+
 ### Architecture & Licensing
 - Integrate JetBrains Marketplace licensing API (isLicensed checks)
 - Define productCode, release-date, release-version in plugin.xml
