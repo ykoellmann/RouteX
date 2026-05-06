@@ -13,5 +13,6 @@ data class ApiCollection(
 data class CollectionEnvironment(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
-    val source: EnvironmentSource
+    val source: EnvironmentSource,
+    val sourceAuth: AuthConfig = AuthConfig(mode = AuthMode.NONE)
 )

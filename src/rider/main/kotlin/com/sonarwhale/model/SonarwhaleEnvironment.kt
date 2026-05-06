@@ -4,7 +4,8 @@ data class SonarwhaleEnvironment(
     val id: String,
     val name: String,                      // z.B. "dev", "staging", "prod"
     val source: EnvironmentSource,
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
+    val sourceAuth: AuthConfig = AuthConfig(mode = AuthMode.NONE)
 )
 
 sealed class EnvironmentSource {

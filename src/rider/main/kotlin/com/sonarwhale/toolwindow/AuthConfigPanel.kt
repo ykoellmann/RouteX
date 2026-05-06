@@ -28,6 +28,8 @@ class AuthConfigPanel(
         border = JBUI.Borders.empty(0, 4)
     }
 
+    val currentAuth: AuthConfig get() = buildFromFields()
+
     private var isLoading = false
 
     // Field components per auth type

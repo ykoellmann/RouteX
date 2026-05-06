@@ -1,5 +1,6 @@
 package com.sonarwhale.settings
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
@@ -18,6 +19,7 @@ import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
+import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -116,6 +118,28 @@ class SonarwhaleConfigurable(private val project: Project) : Configurable {
         // ── Response ──────────────────────────────────────────────────────────
         addSection("Response")
         addCheck(autoFormatCheck)
+
+        // ── Sources ───────────────────────────────────────────────────────────
+        addSection("Sources")
+        val reScanBtn = JButton("Re-Scan All Sources", AllIcons.Actions.ForceRefresh).apply {
+            toolTipText = "Clear cache and re-fetch all OpenAPI sources"
+            addActionListener {
+                RouteIndexService.getInstance(project).reScan()
+            }
+        }
+        val reScanRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).also {
+            it.isOpaque = false
+            it.add(reScanBtn)
+            it.add(JBLabel("  Clears the cache and re-fetches all configured OpenAPI sources").apply {
+                foreground = JBColor.GRAY
+                border = JBUI.Borders.emptyLeft(8)
+            })
+        }
+        val reScanGbc = gbc.clone() as GridBagConstraints
+        reScanGbc.gridx = 0; reScanGbc.gridwidth = 2; reScanGbc.weightx = 1.0
+        reScanGbc.insets = Insets(2, 12, 2, 0)
+        panel.add(reScanRow, reScanGbc)
+        gbc.gridy++
 
         // push content to the top
         val fillerGbc = GridBagConstraints()

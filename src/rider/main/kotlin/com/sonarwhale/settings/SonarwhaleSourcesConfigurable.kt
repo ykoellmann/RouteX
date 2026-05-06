@@ -10,9 +10,12 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.util.ui.JBUI
 import com.sonarwhale.model.ApiCollection
+import com.sonarwhale.model.AuthConfig
+import com.sonarwhale.model.AuthMode
 import com.sonarwhale.model.CollectionEnvironment
 import com.sonarwhale.model.EnvironmentSource
 import com.sonarwhale.service.CollectionService
+import com.sonarwhale.toolwindow.AuthConfigPanel
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Font
@@ -72,6 +75,11 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         it.toolTipText = "Paste your OpenAPI JSON here"
     }
 
+    // Auth panel for ServerUrl source — INHERIT is not meaningful here, default is NONE
+    private val sourceAuthPanel = AuthConfigPanel(AuthConfig(mode = AuthMode.NONE)).apply {
+        onChange = { modified = true }
+    }
+
     override fun getDisplayName() = "Sources"
 
     override fun createComponent(): JComponent {
@@ -92,9 +100,9 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
             }
         }
 
-        addSourceTypeListener(radioServer, CARD_SERVER)
-        addSourceTypeListener(radioFile,   CARD_FILE)
-        addSourceTypeListener(radioStatic, CARD_STATIC)
+        addSourceTypeListener(radioServer, CARD_SERVER) { sourceAuthPanel.isVisible = true }
+        addSourceTypeListener(radioFile,   CARD_FILE)   { sourceAuthPanel.isVisible = false }
+        addSourceTypeListener(radioStatic, CARD_STATIC) { sourceAuthPanel.isVisible = false }
 
         val markModified = object : javax.swing.event.DocumentListener {
             override fun insertUpdate(e: javax.swing.event.DocumentEvent?) { modified = true }
@@ -225,6 +233,9 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         gbc.gridy = 2; gbc.gridx = 0; gbc.gridwidth = 3; gbc.weightx = 1.0
         form.add(sourceCards, gbc)
 
+        gbc.gridy = 3; gbc.gridx = 0; gbc.gridwidth = 3; gbc.weightx = 1.0
+        form.add(sourceAuthPanel, gbc)
+
         val panel = JPanel(BorderLayout())
         panel.border = JBUI.Borders.customLineLeft(JBColor.border())
         panel.add(JBLabel("Configuration").apply {
@@ -280,19 +291,25 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
     private fun loadCollection(idx: Int) {
         val col = collections.getOrNull(idx) ?: run { clearDetail(); return }
         nameField.text = col.name
+        val activeEnv = col.environments.firstOrNull { it.id == col.activeEnvironmentId }
+            ?: col.environments.firstOrNull()
         when (val source = activeSourceOf(col)) {
             is EnvironmentSource.ServerUrl -> {
                 radioServer.isSelected = true; sourceCardLayout.show(sourceCards, CARD_SERVER)
                 hostField.text = source.host; portSpinner.value = source.port
                 pathField.text = source.openApiPath ?: ""
+                sourceAuthPanel.setAuth(activeEnv?.sourceAuth ?: AuthConfig(mode = AuthMode.NONE))
+                sourceAuthPanel.isVisible = true
             }
             is EnvironmentSource.FilePath -> {
                 radioFile.isSelected = true; sourceCardLayout.show(sourceCards, CARD_FILE)
                 filePathField.text = source.path
+                sourceAuthPanel.isVisible = false
             }
             is EnvironmentSource.StaticImport -> {
                 radioStatic.isSelected = true; sourceCardLayout.show(sourceCards, CARD_STATIC)
                 staticArea.text = source.cachedContent
+                sourceAuthPanel.isVisible = false
             }
         }
     }
@@ -304,10 +321,16 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         val source = buildSourceFromUI()
         val envs = col.environments.toMutableList()
         val activeEnvIdx = envs.indexOfFirst { it.id == col.activeEnvironmentId }.takeIf { it >= 0 } ?: 0
+        val savedAuth = if (radioServer.isSelected) sourceAuthPanel.currentAuth else AuthConfig(mode = AuthMode.NONE)
         if (envs.isEmpty()) {
-            envs.add(CollectionEnvironment(id = UUID.randomUUID().toString(), name = "default", source = source))
+            envs.add(CollectionEnvironment(
+                id = UUID.randomUUID().toString(),
+                name = "default",
+                source = source,
+                sourceAuth = savedAuth
+            ))
         } else {
-            envs[activeEnvIdx] = envs[activeEnvIdx].copy(source = source)
+            envs[activeEnvIdx] = envs[activeEnvIdx].copy(source = source, sourceAuth = savedAuth)
         }
         val updated = col.copy(name = name, environments = envs)
         if (updated != col) modified = true
@@ -334,6 +357,8 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         nameField.text = ""; hostField.text = "http://localhost"; portSpinner.value = 5000
         pathField.text = ""; filePathField.text = ""; staticArea.text = ""
         radioServer.isSelected = true; sourceCardLayout.show(sourceCards, CARD_SERVER)
+        sourceAuthPanel.setAuth(AuthConfig(mode = AuthMode.NONE))
+        sourceAuthPanel.isVisible = true
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────
@@ -343,8 +368,8 @@ class SonarwhaleSourcesConfigurable(private val project: Project) : Configurable
         try { block() } finally { suppressingListener = false }
     }
 
-    private fun addSourceTypeListener(radio: JRadioButton, card: String) {
-        radio.addActionListener { sourceCardLayout.show(sourceCards, card); modified = true }
+    private fun addSourceTypeListener(radio: JRadioButton, card: String, onSelect: () -> Unit = {}) {
+        radio.addActionListener { sourceCardLayout.show(sourceCards, card); onSelect(); modified = true }
     }
 
     companion object {

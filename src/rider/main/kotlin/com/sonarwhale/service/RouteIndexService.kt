@@ -142,7 +142,8 @@ class RouteIndexService(private val project: Project) : Disposable {
                     id = activeEnv.id,
                     name = activeEnv.name,
                     source = source,
-                    isActive = true
+                    isActive = true,
+                    sourceAuth = activeEnv.sourceAuth
                 )
 
                 val cachedJson = collectionService.readCache(activeEnv.id)

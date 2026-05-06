@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.OnePixelSplitter
@@ -17,7 +18,9 @@ import com.intellij.ui.components.JBScrollPane
 import com.sonarwhale.model.ApiEndpoint
 import com.sonarwhale.SonarwhaleStateService
 import com.sonarwhale.service.RouteIndexService
+import com.sonarwhale.settings.SonarwhaleConfigurable
 import java.awt.BorderLayout
+import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JProgressBar
 import javax.swing.event.DocumentEvent
@@ -39,10 +42,19 @@ class SonarwhalePanel(private val project: Project) : JPanel(BorderLayout()) {
         val service = RouteIndexService.getInstance(project)
 
         val toolbar = buildToolbar()
+        val settingsBtn = JButton(AllIcons.General.Settings).apply {
+            isBorderPainted = false
+            isContentAreaFilled = false
+            toolTipText = "Sonarwhale Settings"
+            addActionListener {
+                ShowSettingsUtil.getInstance().showSettingsDialog(project, SonarwhaleConfigurable::class.java)
+            }
+        }
 
         val topBar = JPanel(BorderLayout(4, 0))
         topBar.add(toolbar.component, BorderLayout.WEST)
         topBar.add(searchField, BorderLayout.CENTER)
+        topBar.add(settingsBtn, BorderLayout.EAST)
 
         val leftPanel = JPanel(BorderLayout())
         leftPanel.add(topBar, BorderLayout.NORTH)
@@ -163,11 +175,6 @@ class SonarwhalePanel(private val project: Project) : JPanel(BorderLayout()) {
         group.add(object : AnAction("Refresh", "Refresh OpenAPI from source", AllIcons.Actions.Refresh) {
             override fun actionPerformed(e: AnActionEvent) {
                 RouteIndexService.getInstance(project).refresh()
-            }
-        })
-        group.add(object : AnAction("Re-Scan", "Clear cache and re-fetch OpenAPI", AllIcons.Actions.ForceRefresh) {
-            override fun actionPerformed(e: AnActionEvent) {
-                RouteIndexService.getInstance(project).reScan()
             }
         })
         val toolbar = ActionManager.getInstance().createActionToolbar("Sonarwhale.Toolbar", group, true)
