@@ -50,7 +50,7 @@ class VariablesTablePanel(private val project: Project) : JPanel(BorderLayout())
                     if (row !in 0 until model.rowCount) return
                     when (col) {
                         0 -> model.setValueAt(!(model.getValueAt(row, 0) as Boolean), row, 0)
-                        3 -> model.toggleSecret(row, !model.isSecret(row))
+                        3 -> this@VariablesTablePanel.model.toggleSecret(row, !this@VariablesTablePanel.model.isSecret(row))
                     }
                 }
             })
@@ -63,8 +63,8 @@ class VariablesTablePanel(private val project: Project) : JPanel(BorderLayout())
         val addBtn = JButton(AllIcons.General.Add).apply {
             isBorderPainted = false; isContentAreaFilled = false
             addActionListener {
-                model.addRow()
-                table.editCellAt(model.rowCount - 1, 1)
+                this@VariablesTablePanel.model.addRow()
+                table.editCellAt(this@VariablesTablePanel.model.rowCount - 1, 1)
                 table.transferFocus()
             }
         }
@@ -72,7 +72,7 @@ class VariablesTablePanel(private val project: Project) : JPanel(BorderLayout())
             isBorderPainted = false; isContentAreaFilled = false
             addActionListener {
                 val row = table.selectedRow
-                if (row >= 0) model.removeRow(row)
+                if (row >= 0) this@VariablesTablePanel.model.removeRow(row)
             }
         }
 
@@ -202,7 +202,7 @@ class VariablesTablePanel(private val project: Project) : JPanel(BorderLayout())
             table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int
         ): Component {
             val label = super.getTableCellRendererComponent(table, null, isSelected, hasFocus, row, column) as JLabel
-            label.icon = if (value as? Boolean == true) AllIcons.Ide.Readonly else null
+            label.icon = if (value as? Boolean == true) AllIcons.Ide.Readonly else AllIcons.Ide.Readwrite
             label.text = null
             label.toolTipText = if (value as? Boolean == true) "Secret (stored in OS keychain)" else "Click to mark as secret"
             return label

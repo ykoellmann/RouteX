@@ -1,4 +1,5 @@
 import org.apache.tools.ant.taskdefs.condition.Os
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 
 plugins {
     id("java")
@@ -86,27 +87,37 @@ dependencies {
 }
 
 // ---------------------------------------------------------------------------
-// Language-specific run configurations via the official testing extension.
-// Each gets its own prepareSandbox_* task with correct plugin wiring.
+// Language-specific run configurations — each starts a different IDE so the
+// corresponding scanner can be tested end-to-end inside the right editor.
+//
+//   ./gradlew runIdeCSharp   → Rider          (C# / ASP.NET Core)
+//   ./gradlew runIdeJava     → IntelliJ IDEA  (Java / Spring Boot)
+//   ./gradlew runIdePython   → PyCharm        (Python / FastAPI / Flask)
 // ---------------------------------------------------------------------------
 intellijPlatformTesting {
     runIde {
+        // Rider — uses the platform already declared in the dependencies block.
         register("runIdeCSharp") {
             task {
                 maxHeapSize = "1500m"
             }
         }
+
+        // IntelliJ IDEA Community — for Java / Spring Boot scanner testing.
         register("runIdeJava") {
+            type = IntelliJPlatformType.IntellijIdeaCommunity
+            version = ProductVersion
             task {
                 maxHeapSize = "1500m"
             }
         }
+
+        // PyCharm Community — Python support is built-in, no extra plugin needed.
         register("runIdePython") {
+            type = IntelliJPlatformType.PyCharmCommunity
+            version = ProductVersion
             task {
                 maxHeapSize = "1500m"
-            }
-            plugins {
-                plugin("PythonCore:${PythonPluginVersion}")
             }
         }
     }

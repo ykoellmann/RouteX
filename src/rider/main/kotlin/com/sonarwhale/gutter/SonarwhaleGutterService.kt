@@ -41,8 +41,9 @@ class SonarwhaleGutterService(private val project: Project) : Disposable {
     // ── Language scanners ─────────────────────────────────────────────────────
 
     private val scanners: List<LanguageScanner> = listOf(
-        CSharpScanner()
-        // Future: PythonScanner(), JavaSpringScanner()
+        CSharpScanner(),
+        PythonScanner(),
+        JavaScanner()
     )
 
     private val supportedExtensions: Set<String> =
