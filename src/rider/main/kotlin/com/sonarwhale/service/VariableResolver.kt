@@ -14,16 +14,17 @@ abstract class VariableResolverPure {
         tagVars: List<VariableEntry>,
         endpointVars: List<VariableEntry>,
         requestVars: List<VariableEntry>,
-        baseUrl: String?
+        baseUrl: String?,
+        valueFor: (VariableEntry) -> String = { it.value }
     ): Map<String, String> {
         val result = mutableMapOf<String, String>()
         // lowest to highest priority
         baseUrl?.let { result["baseUrl"] = it }
-        globalVars.filter { it.enabled }.forEach { result[it.key] = it.value }
-        collectionVars.filter { it.enabled }.forEach { result[it.key] = it.value }
-        tagVars.filter { it.enabled }.forEach { result[it.key] = it.value }
-        endpointVars.filter { it.enabled }.forEach { result[it.key] = it.value }
-        requestVars.filter { it.enabled }.forEach { result[it.key] = it.value }
+        globalVars.filter { it.enabled }.forEach { result[it.key] = valueFor(it) }
+        collectionVars.filter { it.enabled }.forEach { result[it.key] = valueFor(it) }
+        tagVars.filter { it.enabled }.forEach { result[it.key] = valueFor(it) }
+        endpointVars.filter { it.enabled }.forEach { result[it.key] = valueFor(it) }
+        requestVars.filter { it.enabled }.forEach { result[it.key] = valueFor(it) }
         return result
     }
 
@@ -49,6 +50,14 @@ class VariableResolver(private val project: Project) : VariableResolverPure() {
         val collectionVars = collectionService.getById(collectionId)?.config?.variables ?: emptyList()
         val baseUrl = collectionService.getBaseUrl(collectionId)
 
+        val projectHash = project.basePath ?: project.name
+        val valueFor = { entry: VariableEntry ->
+            if (entry.isSecret && entry.key.isNotEmpty())
+                SecretStorageService.get(projectHash, entry.key) ?: ""
+            else
+                entry.value
+        }
+
         return buildMap(
             globalVars = state.getGlobalConfig().config.variables,
             collectionVars = collectionVars,
@@ -57,7 +66,8 @@ class VariableResolver(private val project: Project) : VariableResolverPure() {
             requestVars = if (requestId != null)
                 state.getRequest(endpointId, requestId)?.config?.variables ?: emptyList()
             else emptyList(),
-            baseUrl = baseUrl
+            baseUrl = baseUrl,
+            valueFor = valueFor
         )
     }
 
